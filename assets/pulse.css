@@ -311,6 +311,11 @@ textarea.sbar { width: 100%; font: 12px/1.5 var(--mono); background: var(--panel
 }
 @media print { .top, #side, #alertBar, #toasts, .modebar { display: none; } #main { overflow: visible; } }
 
+/* Training / guide links in the sidebar footer */
+.sidefoot .learn { display: grid; gap: 4px; padding: 6px 0; }
+.sidefoot .learn a { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.sidefoot .learn svg { width: 15px; height: 15px; }
+
 /* Staff & Access editor */
 .staff th, .staff td { padding: 6px 6px; vertical-align: middle; }
 .staff input:not([type=checkbox]), .staff select { width: 100%; min-width: 0; border: 1px solid var(--line2); background: var(--panel); border-radius: 8px; padding: 6px 8px; font-size: 13px; min-height: 34px; }
