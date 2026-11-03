@@ -201,11 +201,13 @@
         p = getActive();
         const v = p.workflows.vitals;
         if (!v.active) fail(`${p.urn} is not on vitals monitoring.`);
-        const t = a.time ? U.toMs(a.time) : now;
+        let t = a.time ? U.toMs(a.time) : now;
         if (isNaN(t)) fail('Invalid reassessment time.');
         if (t > now + 60000) fail('Reassessment time cannot be in the future.');
         if (t < now - s.backdateMaxMin * 60000) fail(`Reassessments can only be back-dated up to ${s.backdateMaxMin} minutes. Document older observations in the EHR.`);
         const floor = U.toMs(v.lastReassessment || v.startTime);
+        // The time box has no seconds: a time in the same minute as the floor means "right after it", not before.
+        if (t < floor && Math.floor(t / 60000) === Math.floor(floor / 60000)) t = Math.min(floor + 1000, now);
         if (t < floor) fail(`Time must be after the ${v.lastReassessment ? 'previous reassessment' : 'start of monitoring'} (${U.t24(floor)}).`);
         const before = D.vitalsTiming(p, s, t);
         v.reassessments.push(U.iso(t));

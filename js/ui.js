@@ -510,7 +510,8 @@
     UI.modal({
       title: reason === 'locked' ? 'Station locked' : 'Sign in to this station', icon: 'lock', locked: true, submit: 'Sign in',
       body: `${reason === 'locked' ? '<p class="note">The station locked after inactivity to protect patient information.</p>' : ''}
-        <p class="hint">Every action is recorded in the audit trail under this name and role.${S.adapter && S.adapter.kind === 'local' ? ' In local mode this is self-declared, not a verified login — connect PatientFlow MS for real authentication.' : ''}</p>
+        ${(window.PULSEED_SITE || {}).training ? `<p class="note">${ic('shield')} <b>Training version</b>: open to anyone, no account needed. Type any name and pick a role to see what that person sees: <b>Nurse</b> for the station workflows, <b>ED Leader</b> or <b>Admin</b> to also see analytics, the audit trail and exports. Patients here are synthetic and stay in this browser. <a class="link" href="quick-guide.html" target="_blank" rel="noopener">Quick guide</a></p>`
+          : `<p class="hint">Every action is recorded in the audit trail under this name and role.${S.adapter && S.adapter.kind === 'local' ? ' In local mode this is self-declared, not a verified login — connect PatientFlow MS for real authentication.' : ''}</p>`}
         ${field('Your name (as on your badge)', inp('name', S.user ? S.user.name : recent[0] || '', 'required autocomplete="off" list="dl-names" autofocus maxlength="60"'))}
         ${field('Role', sel('role', PE.ROLES, S.user ? S.user.role : 'Nurse'))}
         ${field('Station name', inp('device', S.device.deviceName || '', 'placeholder="e.g. Triage Desk 1" maxlength="40"'), 'Shown in the audit trail. Saved on this PC.')}`,
@@ -536,7 +537,8 @@
       body: `${reason === 'locked' ? '<p class="note">The station locked to protect patient information.</p>' : reason === 'expired' ? '<p class="note">Your Google sign-in expired (they last about an hour). Sign in again to continue — nothing was lost.</p>' : ''}
         <p>Sign in with the Google account the system owner added to the PulseED staff list. Your name and role come from that list and are recorded on every action.</p>
         <div id="gbtn" style="min-height:48px;display:grid;place-items:center"></div>
-        <div class="merr" data-gerr ${S.error ? '' : 'hidden'}>${ic('alert')}<span>${esc(S.error || '')}</span></div>`,
+        <div class="merr" data-gerr ${S.error ? '' : 'hidden'}>${ic('alert')}<span>${esc(S.error || '')}</span></div>
+        <p class="hint">Just want to learn or try it? <a class="link" href="${esc(location.pathname)}?training">Open the training version</a> (no account needed, synthetic patients only) · <a class="link" href="quick-guide.html" target="_blank" rel="noopener">Quick guide</a></p>`,
     });
     m.googleSignIn = true;
     const box = $('#gbtn', m.el), errBox = $('[data-gerr]', m.el);
@@ -621,7 +623,9 @@
         <div class="g2">${field('Time observations were taken', `<input type="datetime-local" name="time" value="${U.localInput(now())}" min="${U.localInput(minT)}" max="${U.localInput(now())}" required>`, `Back-dating allowed up to ${s.backdateMaxMin} min.`)}
         ${field('Note (optional)', inp('note', '', 'maxlength="200" placeholder="e.g. pain reassessed, analgesia given"'))}</div>`,
       onSubmit: async (f, d) => {
-        await run('RECORD_REASSESSMENT', { id, time: d.time ? new Date(d.time).toISOString() : null, note: d.note }, `Reassessment recorded for ${p.urn}; timer reset.`);
+        // Left at the current minute = "now" (with seconds), so it is never earlier than a start a few seconds ago.
+        const t = d.time && d.time !== U.localInput(now()) ? new Date(d.time).toISOString() : null;
+        await run('RECORD_REASSESSMENT', { id, time: t, note: d.note }, `Reassessment recorded for ${p.urn}; timer reset.`);
       },
     });
   };
