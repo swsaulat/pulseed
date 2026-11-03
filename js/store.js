@@ -163,7 +163,12 @@
     async loadSettings() { return this.settings; }
     async saveSettings(s) { const r = await this.call('settings.save', { settings: s, device: S.ctx().device }); this.settings = r.settings; this.since.rev = null; }
     async dispatch(type, payload) {
-      const r = await this.call('commit', { type, payload, device: S.ctx().device });
+      // BUSY means the server could not take the register lock, so nothing was written: safe to try again.
+      let r;
+      for (let i = 0; ; i++) {
+        try { r = await this.call('commit', { type, payload, device: S.ctx().device }); break; }
+        catch (e) { if (e.code !== 'BUSY' || i >= 2) throw e; await new Promise(ok => setTimeout(ok, 1500 + Math.random() * 1500)); }
+      }
       if (r.patient) this.state.patients[r.patient.id] = r.patient;
       (r.events || []).forEach(e => this.state.events.push(e));
       this.since.rev = null; // pull anything else that changed, on the next sync
@@ -178,14 +183,21 @@
     subscribe(fn) {
       this.listeners.push(fn);
       if (this.poll) return;
-      // Poll every 8 s while the page is visible (and immediately when it becomes visible again).
+      // Poll every 8 s while the page is visible (and at once when it becomes visible again). Stations start at a
+      // random offset so they do not all hit the server together, send one request at a time, and back off
+      // (16 s, 32 s, then 1 min) while the server is unreachable or overloaded.
+      let fails = 0, busy = false;
+      const next = () => { clearTimeout(this.poll); this.poll = setTimeout(tick, Math.min(60000, 8000 * 2 ** Math.min(fails, 3)) + Math.random() * 1500); };
       const tick = async () => {
-        if (document.hidden || !S.user) return;
-        try { if (await this.sync()) this.listeners.forEach(f => f()); }
-        catch (e) { this.listeners.forEach(f => f()); }
+        if (busy) return;
+        if (document.hidden || !S.user) return next();
+        busy = true;
+        try { if (await this.sync()) this.listeners.forEach(f => f()); fails = 0; }
+        catch (e) { fails++; this.listeners.forEach(f => f()); }
+        finally { busy = false; next(); }
       };
-      this.poll = setInterval(tick, 8000);
-      document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+      this.poll = setTimeout(tick, 1000 + Math.random() * 7000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden && !busy) { clearTimeout(this.poll); tick(); } });
     }
   }
 
