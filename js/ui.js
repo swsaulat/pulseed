@@ -163,6 +163,10 @@
         <div><span>Overdue</span><b class="${L.overdue.length ? 'tred' : ''}">${L.overdue.length}</b></div>
         <div><span>Need disposition</span><b class="${L.noWf.length ? 'tamber' : ''}">${L.noWf.length}</b></div>
         <div><span>Global Exit Rule</span><b class="tgreen">Armed (any workflow)</b></div>
+        <div class="learn">${(window.PULSEED_SITE || {}).training
+          ? `<a class="link" href="${esc(location.pathname)}">${ic('shield')}Back to live PulseED</a>`
+          : `<a class="link" href="${esc(location.pathname)}?training" target="_blank" rel="noopener" title="Opens in a new tab; this station stays signed in">${ic('shield')}Training version</a>`}
+          <a class="link" href="quick-guide.html" target="_blank" rel="noopener">${ic('clock')}Quick guide</a></div>
         <div class="ver">PulseED v${PE.VERSION}</div>
       </div>`;
     document.title = (L.overdue.length || L.ctas1.length ? `(${L.overdue.length + L.ctas1.length}) ⚠ ` : '') + 'PulseED · ED Flow Station';
@@ -804,11 +808,47 @@
     <b>ED Leader:</b> the detailed view for directors, unit heads and head nurses (same as Charge Nurse).
     <b>Admin:</b> everything, plus this Staff &amp; Access page. Give it to the leaders who should manage staff with you.`;
 
+  const isTraining = () => !!(window.PULSEED_SITE || {}).training;
+
+  // Training copy of Staff & Access: the same page and checks as the live one, kept in this browser.
+  // Nobody is shared, emailed or given access, so leaders can practise before any real staff are added.
+  const practiceStaff = {
+    key: 'pulseed:v2:practiceStaff', owner: 'owner@example.org', limits: { staff: 500, sheet: 100, report: 45 },
+    seed: () => [
+      { name: 'You (system owner)', email: 'owner@example.org', title: 'System owner', role: 'Admin', report: true, access: 'Owner', app: true, owner: true },
+      { name: 'Dr. A. Director', email: 'ed.director@example.org', title: 'ED Director', role: 'ED Leader', report: true, access: 'Viewer', app: true },
+      { name: 'Dr. B. Adult Head', email: 'adult.head@example.org', title: 'Adult ED Unit Head', role: 'ED Leader', report: true, access: 'Viewer', app: true },
+      { name: 'Dr. C. Peds Head', email: 'peds.head@example.org', title: 'Pediatric ED Unit Head', role: 'ED Leader', report: true, access: 'Viewer', app: true },
+      { name: 'D. Head Nurse', email: 'head.nurse@example.org', title: 'ED Head Nurse', role: 'Admin', report: true, access: 'Viewer', app: true },
+      { name: 'E. Charge Nurse', email: 'charge.nurse@example.org', title: 'Charge Nurse', role: 'Charge Nurse', report: false, access: 'None', app: true },
+      { name: 'F. Staff Nurse', email: 'staff.nurse@example.org', title: 'Staff Nurse', role: 'Nurse', report: false, access: 'None', app: true },
+    ],
+    async staffList() { return { owner: this.owner, roles: PE.ROLES, staff: U.ls.get(this.key) || this.seed(), limits: this.limits, practice: true }; },
+    async staffSave(list) {
+      const seen = {}, L = this.limits;
+      list.forEach(p => {
+        if (seen[p.email]) throw new D.RuleError(`${p.email} is listed twice.`);
+        seen[p.email] = true;
+        if (p.email === this.owner) Object.assign(p, { owner: true, role: 'Admin', access: 'Owner', app: true });
+        else if (!PE.ROLES.includes(p.role)) throw new D.RuleError(`Choose a role for ${p.email}.`);
+      });
+      if (!seen[this.owner]) list.unshift(this.seed()[0]);
+      if (list.length > L.staff) throw new D.RuleError(`The staff list is limited to ${L.staff} people.`);
+      const sheet = list.filter(p => p.access !== 'None').length, rep = list.filter(p => p.report).length;
+      if (sheet > L.sheet) throw new D.RuleError(`${sheet} people have Sheet access; the limit is ${L.sheet}. Set nurses to None.`);
+      if (rep > L.report) throw new D.RuleError(`${rep} people get the shift report; the limit is ${L.report}. Use a Google Group address for a bigger list.`);
+      U.ls.set(this.key, list);
+      return Object.assign(await this.staffList(), { shared: [], revoked: [] });
+    },
+  };
+
   /** Staff & Access (Admin, live register): edits the Recipients tab and shares the register in Drive to match. */
   UI.staffModal = async () => {
-    if (!S.isShared() || !S.user || S.user.role !== 'Admin') return UI.toast('Only an Admin signed in to the live register can manage staff.', 'warn');
+    const practice = isTraining();
+    if (!(S.isShared() || practice) || !S.user || S.user.role !== 'Admin') return UI.toast(practice ? 'Sign in with the Admin role to practise Staff & Access.' : 'Only an Admin signed in to the live register can manage staff.', 'warn');
+    const src = practice ? practiceStaff : S.adapter;
     let data;
-    try { data = await S.adapter.staffList(); } catch (e) { return UI.toast(e.message, 'error'); }
+    try { data = await src.staffList(); } catch (e) { return UI.toast(e.message, 'error'); }
     const lim = data.limits || { staff: 500, sheet: 100, report: 45 };
     const orig = {}; data.staff.forEach(p => (orig[p.email] = p));
     const opts = (list, cur) => list.map(v => `<option${v === cur ? ' selected' : ''}>${esc(v)}</option>`).join('');
@@ -824,7 +864,7 @@
     let confirmed = false;
     UI.modal({
       title: 'Staff &amp; Access', icon: 'users', wide: true, submit: 'Save &amp; share',
-      body: `<p class="hint">Who can sign in to PulseED, what they can do, who gets the shift report by email, and who can open the PulseED Register in Google Drive. Each person signs in with the Google email entered here. Saving shares the register to match and removes Drive access from anyone taken off the list or set to None.</p>
+      body: `${practice ? `<p class="note">${ic('shield')} <b>Practice copy (training)</b>: works exactly like the real page, but nothing is shared, emailed or given access. The emails below are examples.</p>` : ''}<p class="hint">Who can sign in to PulseED, what they can do, who gets the shift report by email, and who can open the PulseED Register in Google Drive. Each person signs in with the Google email entered here. Saving shares the register to match and removes Drive access from anyone taken off the list or set to None.</p>
         <details class="rolehelp"><summary>What each role can do</summary><p class="hint">${ROLE_HELP}</p>
           <p class="hint"><b>Sheet access</b> is for leaders only: nurses work in PulseED and do not need the Google Sheet. <b>Shift report</b> is limited to ${lim.report} people (Gmail's daily limit); for a bigger list, enter a Google Group address as one person.</p></details>
         <datalist id="dl-titles">${JOB_TITLES.map(t => `<option value="${esc(t[0])}">`).join('')}</datalist>
@@ -898,7 +938,8 @@
           m.showError(`This takes away access for ${[...removed, ...cut].join(', ')}. Click "Save & share" again to confirm.`);
           return true;
         }
-        const r = await S.adapter.staffSave(staff);
+        const r = await src.staffSave(staff);
+        if (practice) return UI.toast(`Practice list saved: ${r.staff.length} people. This is training, so nobody was shared, emailed or given access.`, 'success');
         await S.reload();
         const notes = [...(r.shared || []), ...(r.revoked || [])];
         UI.toast(`Staff list saved: ${r.staff.length} people.${notes.length ? ' ' + notes.join(' · ') : ''}`, 'success');
@@ -909,8 +950,9 @@
   UI.settingsForm = () => {
     const s = st(), sup = D.isSupervisor(S.user);
     const num = (name, val, min, max, label, hint) => field(label, `<input type="number" name="${name}" value="${esc(val)}" min="${min}" max="${max}" step="1" required>`, hint);
-    const admin = S.isShared() && S.user && S.user.role === 'Admin';
-    return `${admin ? `<section class="panel"><h3>Staff &amp; Access</h3>
+    const admin = (S.isShared() || isTraining()) && S.user && S.user.role === 'Admin';
+    return `${admin ? `<section class="panel"><h3>Staff &amp; Access${isTraining() ? ' <span class="pill amber">practice</span>' : ''}</h3>
+        ${isTraining() ? '<p class="note">Training copy: try adding people, roles and job titles here. Nothing is shared, emailed or given access; the real page is in the live system.</p>' : ''}
         <p class="hint">Add nurses, physicians and ED leaders (ED Director, unit heads, head nurse), set their job title and role, choose who gets the shift report, and share the PulseED Register with leaders. Paste a whole list at once for large teams. Only Admins see this; make other leaders Admin to share the work.</p>
         <div class="row"><button type="button" class="btn primary" data-act="staff">${ic('users')}Manage staff &amp; access</button></div></section>` : ''}
     <form id="setForm" class="settings" novalidate>
