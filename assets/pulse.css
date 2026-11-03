@@ -315,6 +315,12 @@ textarea.sbar { width: 100%; font: 12px/1.5 var(--mono); background: var(--panel
 .staff th, .staff td { padding: 6px 6px; vertical-align: middle; }
 .staff input:not([type=checkbox]), .staff select { width: 100%; min-width: 0; border: 1px solid var(--line2); background: var(--panel); border-radius: 8px; padding: 6px 8px; font-size: 13px; min-height: 34px; }
 .staff input[readonly] { background: var(--panel2); }
-.staff td:nth-child(1) { min-width: 150px; } .staff td:nth-child(2) { min-width: 200px; } .staff td:nth-child(3), .staff td:nth-child(5) { min-width: 120px; }
+.staff td:nth-child(1) { min-width: 150px; } .staff td:nth-child(2) { min-width: 200px; } .staff td:nth-child(3) { min-width: 170px; } .staff td:nth-child(4), .staff td:nth-child(6) { min-width: 120px; }
 .staff .c { text-align: center; } .staff .r { text-align: right; }
 .staff input[type=checkbox] { width: 18px; height: 18px; }
+.staff thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.staffwrap { max-height: 52vh; overflow: auto; margin-top: 8px; }
+.rolehelp { margin: 8px 0; } .rolehelp summary { cursor: pointer; font-weight: 600; font-size: 13px; } .rolehelp .hint b { color: var(--ink); }
+.bulk { border: 1px dashed var(--line2); border-radius: 10px; padding: 10px; margin-top: 8px; }
+.bulk textarea { width: 100%; }
+[data-q] { min-width: 220px; border: 1px solid var(--line2); background: var(--panel); border-radius: 8px; padding: 6px 10px; min-height: 36px; }
