@@ -533,15 +533,15 @@
     if (!clientId) return showErr(S.error || 'Google Sign-In is not configured on the server yet (Settings → GOOGLE_CLIENT_ID).');
     const start = () => {
       google.accounts.id.initialize({
-        client_id: clientId, auto_select: reason !== 'locked', cancel_on_tap_outside: false, itp_support: true, use_fedcm_for_prompt: true,
+        client_id: clientId, auto_select: false, cancel_on_tap_outside: false, itp_support: true,
         callback: async r => {
           box.innerHTML = '<p class="hint">Checking your account…</p>';
           try { const u = await g.signIn(r.credential); S.error = null; m.close(); UI.refresh(); await S.reload(); UI.toast(`Signed in as ${u.name} (${u.role}).`); }
           catch (e) { showErr(e.message); google.accounts.id.renderButton(box, { theme: 'outline', size: 'large', shape: 'pill', text: 'continue_with' }); }
         },
       });
+      // Button only: running One Tap (prompt) alongside it lets a click abort both flows, so sign-in silently fails.
       google.accounts.id.renderButton(box, { theme: 'outline', size: 'large', shape: 'pill', text: 'continue_with', width: 300 });
-      if (reason !== 'locked') try { google.accounts.id.prompt(); } catch (e) { /* ignore */ }
     };
     if (window.google && google.accounts && google.accounts.id) return start();
     const s = Object.assign(document.createElement('script'), { src: 'https://accounts.google.com/gsi/client', async: true, onload: start, onerror: () => showErr('Google Sign-In could not load. Check the internet connection, then reload the page.') });
