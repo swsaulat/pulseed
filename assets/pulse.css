@@ -310,3 +310,11 @@ textarea.sbar { width: 100%; font: 12px/1.5 var(--mono); background: var(--panel
   .tl { grid-template-columns: 1fr; } .tl small, .tl > span:nth-child(3) { grid-column: 1; }
 }
 @media print { .top, #side, #alertBar, #toasts, .modebar { display: none; } #main { overflow: visible; } }
+
+/* Staff & Access editor */
+.staff th, .staff td { padding: 6px 6px; vertical-align: middle; }
+.staff input:not([type=checkbox]), .staff select { width: 100%; min-width: 0; border: 1px solid var(--line2); background: var(--panel); border-radius: 8px; padding: 6px 8px; font-size: 13px; min-height: 34px; }
+.staff input[readonly] { background: var(--panel2); }
+.staff td:nth-child(1) { min-width: 150px; } .staff td:nth-child(2) { min-width: 200px; } .staff td:nth-child(3), .staff td:nth-child(5) { min-width: 120px; }
+.staff .c { text-align: center; } .staff .r { text-align: right; }
+.staff input[type=checkbox] { width: 18px; height: 18px; }
