@@ -120,7 +120,7 @@
     const L = UI.lists();
     const demo = S.device.mode === 'demo';
     $('#modeBar').innerHTML = demo
-      ? `<div class="modebar demo">${ic('shield')}<b>TRAINING / DEMO MODE</b> — synthetic data only. Never enter real patients here. <button class="link" data-act="switchmode">Switch to live mode</button></div>`
+      ? `<div class="modebar demo">${ic('shield')}<b>TRAINING / DEMO MODE</b> — synthetic data only. Never enter real patients here. <a class="link" href="quick-guide.html" target="_blank" rel="noopener">Quick guide</a> · <button class="link" data-act="switchmode">Switch to live mode</button></div>`
       : '';
     $('#siteLine').textContent = `${st().siteName} · ${S.device.deviceName || st().stationName}`;
     const ss = S.adapter ? S.adapter.status() : { ok: false, label: '…' };
@@ -920,9 +920,17 @@
       };
       i.click();
     }),
-    switchmode: () => (window.PULSEED_SITE || {}).forceLive ? UI.toast('This deployment is live-only.', 'warn') : UI.modal({ title: 'Switch mode', icon: 'shield', submit: 'Switch',
+    switchmode: () => {
+      const site = window.PULSEED_SITE || {};
+      // On patientflowms.com the mode is chosen by the address: the plain URL is live, ?training is the training copy.
+      if (site.training || site.forceLive) return UI.modal({ title: site.training ? 'Leave training' : 'Open training', icon: 'shield', submit: site.training ? 'Open live PulseED' : 'Open training',
+        body: site.training ? '<p>Open the live PulseED station? Training patients stay on this PC only and never reach the live register.</p>'
+          : '<p>Open the training copy of PulseED in this tab? It uses synthetic patients only and never touches the live register. You will sign in again when you come back.</p>',
+        onSubmit: async () => { location.href = location.pathname + (site.training ? '' : '?training'); } });
+      return UI.modal({ title: 'Switch mode', icon: 'shield', submit: 'Switch',
       body: `<p>Switch this station to <b>${S.device.mode === 'demo' ? 'Live' : 'Training / Demo'}</b> mode? The two modes have separate data; nothing is deleted.</p>`,
-      onSubmit: async () => { S.device.mode = S.device.mode === 'demo' ? 'live' : 'demo'; S.saveDevice(); location.reload(); } }),
+      onSubmit: async () => { S.device.mode = S.device.mode === 'demo' ? 'live' : 'demo'; S.saveDevice(); location.reload(); } });
+    },
     reseed: () => UI.modal({ title: 'Reset demo data', icon: 'undo', submit: 'Reset', body: '<p>Replace all demo data with a fresh synthetic data set?</p>',
       onSubmit: async () => { await S.adapter.replace(PE.demo.build(S.settings).state); await S.reload(); UI.toast('Demo data reset.'); } }),
     wipe: needUser(() => {

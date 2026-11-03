@@ -106,7 +106,8 @@
     UI.mount();
     UI.applyTheme();
     const site = window.PULSEED_SITE || {};
-    if (site.forceLive) start('live');
+    if (site.training) start('demo');
+    else if (site.forceLive) start('live');
     else if (S.device.mode) start(S.device.mode);
     else UI.modeModal(mode => start(mode));
   });
