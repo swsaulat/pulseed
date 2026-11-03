@@ -170,6 +170,9 @@
       return { events: r.events || [], patient: r.patient };
     }
     async logExport(what, deid) { await this.call('logExport', { what, deid, device: S.ctx().device }); this.since.rev = null; }
+    // Staff & Access (Admin only; the server checks). Saving also shares the register in Drive, which can take a while.
+    staffList() { return this.call('staff.list'); }
+    async staffSave(staff) { const r = await this.call('staff.save', { staff, device: S.ctx().device }, 120000); this.since.rev = null; return r; }
     async commit() { throw new D.RuleError('Not available with the shared register.'); }
     async replace() { throw new D.RuleError('Restoring a backup over the shared register is done by the owner in the Google Sheet.'); }
     subscribe(fn) {

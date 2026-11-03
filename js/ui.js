@@ -777,10 +777,67 @@
   };
 
   // ------------------------------------------------------------------ settings
+  /** Staff & Access (Admin, live register): edits the Recipients tab and shares the register in Drive to match. */
+  UI.staffModal = async () => {
+    if (!S.isShared() || !S.user || S.user.role !== 'Admin') return UI.toast('Only an Admin signed in to the live register can manage staff.', 'warn');
+    let data;
+    try { data = await S.adapter.staffList(); } catch (e) { return UI.toast(e.message, 'error'); }
+    const orig = {}; data.staff.forEach(p => (orig[p.email] = p));
+    const opts = (list, cur) => list.map(v => `<option${v === cur ? ' selected' : ''}>${esc(v)}</option>`).join('');
+    const row = (p = { role: 'Nurse', access: 'Editor', app: true, report: false }) => `<tr data-row ${p.owner ? 'data-owner' : ''} data-notes="${esc(p.notes || '')}">
+      <td><input data-k="name" value="${esc(p.name || '')}" maxlength="80" placeholder="e.g. A. Khan" aria-label="Name"></td>
+      <td><input data-k="email" type="email" value="${esc(p.email || '')}" maxlength="120" placeholder="name@gmail.com" aria-label="Google email" ${p.owner ? 'readonly' : ''}></td>
+      <td>${p.owner ? '<b>Admin</b> (owner)' : `<select data-k="role" aria-label="Role">${opts(data.roles, p.role)}</select>`}</td>
+      <td class="c"><input type="checkbox" data-k="report" ${p.report ? 'checked' : ''} aria-label="Gets the shift report"></td>
+      <td>${p.owner ? 'Owner' : `<select data-k="access" aria-label="Sheet access">${opts(['Editor', 'Viewer', 'None'], p.access)}</select>`}</td>
+      <td class="c">${p.owner ? '✓' : `<input type="checkbox" data-k="app" ${p.app !== false ? 'checked' : ''} aria-label="Can sign in to PulseED">`}</td>
+      <td class="r">${p.owner ? '' : `<button type="button" class="btn sm ghost" data-del title="Remove">${ic('x')}</button>`}</td></tr>`;
+    let confirmed = false;
+    UI.modal({
+      title: 'Staff &amp; Access', icon: 'users', wide: true, submit: 'Save &amp; share',
+      body: `<p class="hint">Who can sign in to PulseED, who gets the 07:00 / 19:00 shift report by email, and who can open the PulseED Register in Google Drive. Each person signs in with the Google email entered here. Saving shares the register to match and removes Drive access from anyone taken off the list or set to None.</p>
+        <div class="tw"><table class="staff"><thead><tr><th>Name (as on badge)</th><th>Google email</th><th>Role</th><th class="c">Shift report</th><th>Sheet access</th><th class="c">Can sign in</th><th></th></tr></thead>
+        <tbody>${data.staff.map(row).join('')}</tbody></table></div>
+        <div class="row"><button type="button" class="btn ghost" data-add>${ic('plus')}Add person</button><span class="grow"></span><small class="hint" data-count></small></div>`,
+      onMount: el => {
+        const body = $('tbody', el), count = () => ($('[data-count]', el).textContent = `${$$('[data-row]', el).length} people`);
+        $('[data-add]', el).onclick = () => { body.insertAdjacentHTML('beforeend', row()); count(); confirmed = false; $('tr:last-child input', body).focus(); };
+        body.addEventListener('click', e => { const b = e.target.closest('[data-del]'); if (b) { b.closest('tr').remove(); count(); confirmed = false; } });
+        body.addEventListener('change', () => (confirmed = false));
+        count();
+      },
+      onSubmit: async (form, d, m) => {
+        const val = (tr, k) => { const x = $(`[data-k="${k}"]`, tr); return !x ? null : x.type === 'checkbox' ? x.checked : U.norm(x.value); };
+        const staff = $$('[data-row]', form).map(tr => ({ name: val(tr, 'name'), email: (val(tr, 'email') || '').toLowerCase(), role: val(tr, 'role') || 'Admin', report: val(tr, 'report'), access: val(tr, 'access') || 'Owner', app: tr.hasAttribute('data-owner') ? true : val(tr, 'app'), notes: tr.dataset.notes || '' }))
+          .filter(p => p.name || p.email);
+        staff.forEach((p, i) => {
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.email)) throw new D.RuleError(`Row ${i + 1}: enter the person's Google email.`);
+          if (p.name.length < 2) throw new D.RuleError(`Enter a name for ${p.email}. It is recorded on every action.`);
+        });
+        const keep = new Set(staff.map(p => p.email));
+        const removed = Object.keys(orig).filter(e => !keep.has(e));
+        const cut = staff.filter(p => orig[p.email] && orig[p.email].access !== 'None' && p.access === 'None').map(p => p.email);
+        if ((removed.length || cut.length) && !confirmed) {
+          confirmed = true;
+          m.showError(`This takes away access for ${[...removed, ...cut].join(', ')}. Click "Save & share" again to confirm.`);
+          return true;
+        }
+        const r = await S.adapter.staffSave(staff);
+        await S.reload();
+        const notes = [...(r.shared || []), ...(r.revoked || [])];
+        UI.toast(`Staff list saved: ${r.staff.length} people.${notes.length ? ' ' + notes.join(' · ') : ''}`, 'success');
+      },
+    });
+  };
+
   UI.settingsForm = () => {
     const s = st(), sup = D.isSupervisor(S.user);
     const num = (name, val, min, max, label, hint) => field(label, `<input type="number" name="${name}" value="${esc(val)}" min="${min}" max="${max}" step="1" required>`, hint);
-    return `<form id="setForm" class="settings" novalidate>
+    const admin = S.isShared() && S.user && S.user.role === 'Admin';
+    return `${admin ? `<section class="panel"><h3>Staff &amp; Access</h3>
+        <p class="hint">Add nurses, physicians and ED leaders, set their role, choose who gets the shift report, and share the PulseED Register with them. Only Admins see this.</p>
+        <div class="row"><button type="button" class="btn primary" data-act="staff">${ic('users')}Manage staff &amp; access</button></div></section>` : ''}
+    <form id="setForm" class="settings" novalidate>
       ${sup ? '' : `<div class="note">${ic('lock')} Read-only — sign in as a Charge Nurse or Admin to change department settings.</div>`}
       <fieldset ${sup ? '' : 'disabled'}>
       <section class="panel"><h3>Department</h3><div class="g3">
@@ -808,7 +865,7 @@
       </div></section>
       <section class="panel"><h3>PatientFlow MS register (all workstations)</h3>
         <p class="hint">${S.isShared()
-          ? `Connected to the shared PulseED register (Google Sheet owned by the system owner). Staff, roles, report recipients and report times are managed in that Sheet’s Recipients and Settings tabs. Status: <b>${esc(S.adapter.status().label)}</b>.`
+          ? `Connected to the shared PulseED register (Google Sheet owned by the system owner). Admins manage staff above under Staff &amp; Access; report times are in that Sheet’s Settings tab. Status: <b>${esc(S.adapter.status().label)}</b>.`
           : 'This station keeps data in this browser only. The shared, multi-workstation register is used automatically at pulseed.patientflowms.com (configured in <code>js/site-config.js</code>).'}</p>
       </section>
       <div class="row end"><button type="submit" class="btn primary">${ic('check')}Save department settings</button></div>
@@ -888,6 +945,7 @@
     reopen: needUser(UI.reopenModal),
     new: needUser(UI.newPatientModal),
     handoff: needUser(UI.handoffModal),
+    staff: needUser(UI.staffModal),
     privacy: () => { S.device.privacy = !S.device.privacy; S.saveDevice(); UI.refresh(); },
     sound: () => { S.device.sound = !S.device.sound; S.saveDevice(); if (S.device.sound && PE.audio) PE.audio.chime('test'); UI.renderChrome(); UI.toast(S.device.sound ? 'Audio alerts on.' : 'Audio alerts muted on this station. Visual alerts continue.', S.device.sound ? 'success' : 'warn'); },
     theme: () => { S.device.theme = S.device.theme === 'dark' ? 'light' : 'dark'; S.saveDevice(); UI.applyTheme(); UI.renderChrome(); },
