@@ -184,9 +184,12 @@
   UI.renderBody = () => {
     const v = VIEWS[UI.view];
     const body = $('#viewBody');
-    // Never rebuild the settings form underneath someone typing in it.
-    if (UI.view === 'settings' && body.childElementCount && !UI._forceSettings) return;
+    // Never rebuild the settings form underneath someone typing in it, except when the signed-in user changes
+    // (sign-in, lock), because what the page shows depends on the role.
+    const who = S.user ? `${S.user.name}|${S.user.role}` : '';
+    if (UI.view === 'settings' && body.childElementCount && !UI._forceSettings && UI._settingsWho === who) return;
     UI._forceSettings = false;
+    UI._settingsWho = who;
     const y = $('#main').scrollTop;
     body.innerHTML = v.body();
     if (v.after) v.after();
