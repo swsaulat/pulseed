@@ -172,7 +172,7 @@
     async logExport(what, deid) { await this.call('logExport', { what, deid, device: S.ctx().device }); this.since.rev = null; }
     // Staff & Access (Admin only; the server checks). Saving also shares the register in Drive, which can take a while.
     staffList() { return this.call('staff.list'); }
-    async staffSave(staff) { const r = await this.call('staff.save', { staff, device: S.ctx().device }, 120000); this.since.rev = null; return r; }
+    async staffSave(staff) { const r = await this.call('staff.save', { staff, device: S.ctx().device }, 330000); this.since.rev = null; return r; }
     async commit() { throw new D.RuleError('Not available with the shared register.'); }
     async replace() { throw new D.RuleError('Restoring a backup over the shared register is done by the owner in the Google Sheet.'); }
     subscribe(fn) {
@@ -267,7 +267,7 @@
   S.logExport = async (what, deid) => { try { await S.adapter.logExport(what, deid); await S.reload(); } catch (e) { /* the export itself still proceeds */ } };
 
   S.saveSettings = async next => {
-    if (!D.isSupervisor(S.user)) throw new D.RuleError('Only a Charge Nurse or Admin can change settings.', 'FORBIDDEN');
+    if (!D.isSupervisor(S.user)) throw new D.RuleError('Only a Charge Nurse, ED Leader or Admin can change settings.', 'FORBIDDEN');
     await S.adapter.saveSettings(next);
     S.settings = S.mergeSettings(next);
     await S.reload();

@@ -43,6 +43,8 @@
     backend: { mode: 'local', supabaseUrl: '', supabaseAnonKey: '', facilityId: '' },
   };
 
-  PE.ROLES = ['Nurse', 'Charge Nurse', 'Physician', 'Bed Coordinator', 'Admin'];
-  PE.SUPERVISOR_ROLES = ['Charge Nurse', 'Admin'];
+  // ED Leader = directors, unit heads, head nurses: the detailed view (analytics, audit, exports) and settings.
+  // Admin = the same plus Staff & Access. Everyone else uses the station workflows.
+  PE.ROLES = ['Nurse', 'Charge Nurse', 'Physician', 'Bed Coordinator', 'ED Leader', 'Admin'];
+  PE.SUPERVISOR_ROLES = ['Charge Nurse', 'ED Leader', 'Admin'];
 })(window.PulseED);

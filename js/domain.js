@@ -354,7 +354,7 @@
         p = get();
         if (p.status !== 'exited' || !p.exit) fail('Patient is already active.');
         const ownRecent = p.exit.by === user.name && now - U.toMs(p.exit.time) < 10 * 60000;
-        if (!ownRecent && !D.isSupervisor(user)) fail('Only a Charge Nurse or Admin can reopen an exit made by someone else or more than 10 minutes ago.', 'FORBIDDEN');
+        if (!ownRecent && !D.isSupervisor(user)) fail('Only a Charge Nurse, ED Leader or Admin can reopen an exit made by someone else or more than 10 minutes ago.', 'FORBIDDEN');
         const reason = U.norm(a.reason); if (!reason) fail('Give a reason for reopening.');
         const dup = D.activePatients(state).find(x => U.key(x.urn) === U.key(p.urn));
         if (dup) fail(`URN ${p.urn} has been re-registered since the exit; use that record.`, 'DUPLICATE');

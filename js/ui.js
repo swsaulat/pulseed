@@ -80,6 +80,10 @@
     ['procedure', 'Awaiting Procedure', 'syringe'], ['patients', 'All Patients', 'users'], ['analytics', 'Admin & SPC Analytics', 'chart'],
     ['audit', 'Event Audit Trail', 'clock'], ['settings', 'Settings', 'sliders'],
   ];
+  // The detailed view (analytics, audit trail, exports) is for Charge Nurses, ED Leaders and Admins.
+  const LEADER_VIEWS = ['analytics', 'audit'];
+  const canSee = view => !LEADER_VIEWS.includes(view) || D.isSupervisor(S.user);
+  UI.canSee = canSee;
 
   UI.mount = () => {
     document.getElementById('app').innerHTML = `
@@ -136,7 +140,8 @@
     $('#soundBtn').classList.toggle('warn', !S.device.sound);
     $('#themeBtn').innerHTML = ic(S.device.theme === 'dark' ? 'sun' : 'moon');
     $('#themeBtn').title = S.device.theme === 'dark' ? 'Day mode' : 'Night mode';
-    $('#userChip').innerHTML = S.user ? `${ic('lock')}<span>${esc(S.user.name)} · ${esc(S.user.role)}</span>` : `${ic('lock')}<span>Signed out</span>`;
+    $('#userChip').innerHTML = S.user ? `${ic('lock')}<span>${esc(S.user.name)} · ${esc(S.user.title || S.user.role)}</span>` : `${ic('lock')}<span>Signed out</span>`;
+    $('#userChip').title = S.user ? `Role: ${S.user.role}` : '';
 
     // alert bar
     const ab = $('#alertBar');
@@ -150,7 +155,7 @@
     // sidebar
     const badges = { dashboard: L.a.length, vitals: L.vit.length, bed: L.bed.length, procedure: L.proc.length, patients: L.a.length, audit: S.state.events.length };
     const hot = { vitals: L.overdue.length > 0 };
-    $('#side').innerHTML = `<nav aria-label="Views"><div class="navh">Workflows &amp; Views</div>${NAV.map(([k, label, icon]) => `
+    $('#side').innerHTML = `<nav aria-label="Views"><div class="navh">Workflows &amp; Views</div>${NAV.filter(([k]) => canSee(k)).map(([k, label, icon]) => `
       <button class="nav ${UI.view === k ? 'active' : ''}" data-act="nav" data-id="${k}" aria-current="${UI.view === k ? 'page' : 'false'}">
         ${ic(icon)}<span>${label}</span>${badges[k] != null ? `<b class="nb ${hot[k] ? 'hot' : ''}">${badges[k]}</b>` : ''}</button>`).join('')}</nav>
       <div class="sidefoot">
@@ -173,6 +178,7 @@
   // ------------------------------------------------------------------ view rendering
   UI.go = view => {
     if (!VIEWS[view]) view = 'dashboard';
+    if (!canSee(view)) { if (S.user) UI.toast('Analytics and the audit trail are for Charge Nurses, ED Leaders and Admins.', 'warn'); view = 'dashboard'; }
     UI.view = view;
     UI._forceSettings = true;
     try { history.replaceState(null, '', '#' + view); } catch (e) { /* file:// */ }
@@ -182,6 +188,8 @@
     $('#main').scrollTop = 0;
   };
   UI.renderBody = () => {
+    // Someone without the detailed view signed in (or the leader locked the station): back to the dashboard.
+    if (!canSee(UI.view)) { UI.view = 'dashboard'; $('#viewHead').innerHTML = VIEWS.dashboard.head(); try { history.replaceState(null, '', '#dashboard'); } catch (e) { /* file:// */ } }
     const v = VIEWS[UI.view];
     const body = $('#viewBody');
     // Never rebuild the settings form underneath someone typing in it, except when the signed-in user changes
@@ -399,7 +407,7 @@
     },
 
     settings: {
-      head: () => head('Settings', 'Clinical timing rules, thresholds and lists for this department. Saving requires a Charge Nurse or Admin. Station preferences apply to this PC only.'),
+      head: () => head('Settings', 'Clinical timing rules, thresholds and lists for this department. Saving requires a Charge Nurse, ED Leader or Admin. Station preferences apply to this PC only.'),
       body() { return UI.settingsForm(); },
       after() { UI.bindSettings(); },
     },
@@ -780,16 +788,30 @@
   };
 
   // ------------------------------------------------------------------ settings
+  // Job titles offered on the Staff & Access page: [title, role, shift report, Sheet access] it starts with (the Admin can change each).
+  const JOB_TITLES = [
+    ['ED Director', 'ED Leader', true, 'Viewer'], ['Adult ED Unit Head', 'ED Leader', true, 'Viewer'], ['Pediatric ED Unit Head', 'ED Leader', true, 'Viewer'],
+    ['ED Head Nurse', 'ED Leader', true, 'Viewer'], ['Assistant Head Nurse', 'ED Leader', true, 'Viewer'], ['Nurse Educator', 'ED Leader', false, 'None'],
+    ['Quality / Patient Flow Coordinator', 'ED Leader', false, 'Viewer'], ['Charge Nurse', 'Charge Nurse', false, 'None'], ['Staff Nurse', 'Nurse', false, 'None'],
+    ['ED Physician', 'Physician', false, 'None'], ['Bed Coordinator', 'Bed Coordinator', false, 'None'],
+  ];
+  const ROLE_HELP = `<b>Nurse · Physician · Bed Coordinator:</b> the station workflows (admit, reassess, beds, procedures, exits).
+    <b>Charge Nurse:</b> the same, plus analytics, audit trail, exports, settings and reopening exits.
+    <b>ED Leader:</b> the detailed view for directors, unit heads and head nurses (same as Charge Nurse).
+    <b>Admin:</b> everything, plus this Staff &amp; Access page. Give it to the leaders who should manage staff with you.`;
+
   /** Staff & Access (Admin, live register): edits the Recipients tab and shares the register in Drive to match. */
   UI.staffModal = async () => {
     if (!S.isShared() || !S.user || S.user.role !== 'Admin') return UI.toast('Only an Admin signed in to the live register can manage staff.', 'warn');
     let data;
     try { data = await S.adapter.staffList(); } catch (e) { return UI.toast(e.message, 'error'); }
+    const lim = data.limits || { staff: 500, sheet: 100, report: 45 };
     const orig = {}; data.staff.forEach(p => (orig[p.email] = p));
     const opts = (list, cur) => list.map(v => `<option${v === cur ? ' selected' : ''}>${esc(v)}</option>`).join('');
-    const row = (p = { role: 'Nurse', access: 'Editor', app: true, report: false }) => `<tr data-row ${p.owner ? 'data-owner' : ''} data-notes="${esc(p.notes || '')}">
+    const row = (p = { role: 'Nurse', access: 'None', app: true, report: false }) => `<tr data-row ${p.owner ? 'data-owner' : ''} data-notes="${esc(p.notes || '')}">
       <td><input data-k="name" value="${esc(p.name || '')}" maxlength="80" placeholder="e.g. A. Khan" aria-label="Name"></td>
       <td><input data-k="email" type="email" value="${esc(p.email || '')}" maxlength="120" placeholder="name@gmail.com" aria-label="Google email" ${p.owner ? 'readonly' : ''}></td>
+      <td><input data-k="title" list="dl-titles" value="${esc(p.title || '')}" maxlength="60" placeholder="e.g. ED Head Nurse" aria-label="Job title"></td>
       <td>${p.owner ? '<b>Admin</b> (owner)' : `<select data-k="role" aria-label="Role">${opts(data.roles, p.role)}</select>`}</td>
       <td class="c"><input type="checkbox" data-k="report" ${p.report ? 'checked' : ''} aria-label="Gets the shift report"></td>
       <td>${p.owner ? 'Owner' : `<select data-k="access" aria-label="Sheet access">${opts(['Editor', 'Viewer', 'None'], p.access)}</select>`}</td>
@@ -798,23 +820,70 @@
     let confirmed = false;
     UI.modal({
       title: 'Staff &amp; Access', icon: 'users', wide: true, submit: 'Save &amp; share',
-      body: `<p class="hint">Who can sign in to PulseED, who gets the 07:00 / 19:00 shift report by email, and who can open the PulseED Register in Google Drive. Each person signs in with the Google email entered here. Saving shares the register to match and removes Drive access from anyone taken off the list or set to None.</p>
-        <div class="tw"><table class="staff"><thead><tr><th>Name (as on badge)</th><th>Google email</th><th>Role</th><th class="c">Shift report</th><th>Sheet access</th><th class="c">Can sign in</th><th></th></tr></thead>
+      body: `<p class="hint">Who can sign in to PulseED, what they can do, who gets the shift report by email, and who can open the PulseED Register in Google Drive. Each person signs in with the Google email entered here. Saving shares the register to match and removes Drive access from anyone taken off the list or set to None.</p>
+        <details class="rolehelp"><summary>What each role can do</summary><p class="hint">${ROLE_HELP}</p>
+          <p class="hint"><b>Sheet access</b> is for leaders only: nurses work in PulseED and do not need the Google Sheet. <b>Shift report</b> is limited to ${lim.report} people (Gmail's daily limit); for a bigger list, enter a Google Group address as one person.</p></details>
+        <datalist id="dl-titles">${JOB_TITLES.map(t => `<option value="${esc(t[0])}">`).join('')}</datalist>
+        <div class="row wrap"><input type="search" data-q placeholder="Search name, email, title or role…" aria-label="Search staff" class="grow">
+          <button type="button" class="btn ghost" data-add>${ic('plus')}Add person</button>
+          <button type="button" class="btn ghost" data-bulk>${ic('users')}Add many (paste a list)</button></div>
+        <div class="bulk" data-bulkbox hidden>
+          ${field('Paste one person per line: name and Google email, separated by a comma or tab (copy two columns straight from Excel)', '<textarea data-paste rows="6" placeholder="Aisha Khan, aisha.khan@gmail.com&#10;Omar Ali&#9;omar.ali@hospital.org"></textarea>')}
+          <div class="row wrap">${field('Job title for all of them', `<input data-btitle list="dl-titles" value="Staff Nurse" maxlength="60">`)}
+            <button type="button" class="btn primary" data-badd>${ic('plus')}Add to the list</button><small class="hint" data-bmsg></small></div></div>
+        <div class="tw staffwrap"><table class="staff"><thead><tr><th>Name (as on badge)</th><th>Google email</th><th>Job title</th><th>Role</th><th class="c">Shift report</th><th>Sheet access</th><th class="c">Can sign in</th><th></th></tr></thead>
         <tbody>${data.staff.map(row).join('')}</tbody></table></div>
-        <div class="row"><button type="button" class="btn ghost" data-add>${ic('plus')}Add person</button><span class="grow"></span><small class="hint" data-count></small></div>`,
+        <p class="hint" data-count></p>`,
       onMount: el => {
-        const body = $('tbody', el), count = () => ($('[data-count]', el).textContent = `${$$('[data-row]', el).length} people`);
-        $('[data-add]', el).onclick = () => { body.insertAdjacentHTML('beforeend', row()); count(); confirmed = false; $('tr:last-child input', body).focus(); };
-        body.addEventListener('click', e => { const b = e.target.closest('[data-del]'); if (b) { b.closest('tr').remove(); count(); confirmed = false; } });
-        body.addEventListener('change', () => (confirmed = false));
+        const body = $('tbody', el);
+        const count = () => {
+          const rows = $$('[data-row]', el), n = sel => rows.filter(sel).length;
+          const rep = n(tr => $('[data-k="report"]', tr).checked), sh = n(tr => tr.hasAttribute('data-owner') || /Editor|Viewer/.test($('[data-k="access"]', tr).value));
+          const lead = n(tr => tr.hasAttribute('data-owner') || /ED Leader|Admin/.test($('[data-k="role"]', tr).value));
+          const over = (v, max) => (v > max ? ` <b class="tred">(limit ${max})</b>` : ` <span>of ${max}</span>`);
+          $('[data-count]', el).innerHTML = `<b>${rows.length}</b> people${over(rows.length, lim.staff)} · ${lead} leaders / admins · ${rep} get the shift report${over(rep, lim.report)} · ${sh} with Sheet access${over(sh, lim.sheet)}`;
+        };
+        const touched = () => { count(); confirmed = false; };
+        $('[data-add]', el).onclick = () => { body.insertAdjacentHTML('afterbegin', row()); touched(); $('tr:first-child input', body).focus(); };
+        $('[data-bulk]', el).onclick = () => { const b = $('[data-bulkbox]', el); b.hidden = !b.hidden; if (!b.hidden) $('[data-paste]', el).focus(); };
+        $('[data-badd]', el).onclick = () => {
+          const title = U.norm($('[data-btitle]', el).value), preset = JOB_TITLES.find(t => t[0] === title) || [title, 'Nurse', false, 'None'];
+          const have = new Set($$('[data-k="email"]', el).map(x => x.value.trim().toLowerCase()));
+          let added = 0, skipped = 0, bad = [];
+          U.lines($('[data-paste]', el).value).forEach(line => {
+            const m = line.match(/[^\s,;<>"]+@[^\s,;<>"]+\.[^\s,;<>"]+/);
+            if (!m) { bad.push(line); return; }
+            const email = m[0].toLowerCase(), name = U.norm(line.replace(m[0], ' ').replace(/[<>"]/g, ' ').replace(/[\t,;]+/g, ' '));
+            if (have.has(email)) { skipped++; return; }
+            have.add(email); added++;
+            body.insertAdjacentHTML('afterbegin', row({ name, email, title, role: preset[1], report: preset[2], access: preset[3], app: true }));
+          });
+          $('[data-paste]', el).value = bad.join('\n');
+          $('[data-bmsg]', el).textContent = `Added ${added}.${skipped ? ` ${skipped} already on the list.` : ''}${bad.length ? ` ${bad.length} line(s) without an email are left in the box.` : ''} Click "Save & share" to finish.`;
+          touched();
+        };
+        // Enter in the search or title box must not submit (and share) the whole list.
+        el.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) e.preventDefault(); });
+        $('[data-q]', el).oninput = e => {
+          const q = U.key(e.target.value);
+          $$('[data-row]', el).forEach(tr => { tr.hidden = !!q && !$$('input,select', tr).some(x => U.key(x.value).includes(q)); });
+        };
+        body.addEventListener('click', e => { const b = e.target.closest('[data-del]'); if (b) { b.closest('tr').remove(); touched(); } });
+        body.addEventListener('change', e => {
+          // Picking a known job title fills in its usual role, report and Sheet access.
+          const t = e.target.closest('[data-k="title"]'), tr = e.target.closest('tr');
+          const preset = t && JOB_TITLES.find(x => x[0] === U.norm(t.value));
+          if (preset && !tr.hasAttribute('data-owner')) { $('[data-k="role"]', tr).value = preset[1]; $('[data-k="report"]', tr).checked = preset[2]; $('[data-k="access"]', tr).value = preset[3]; }
+          touched();
+        });
         count();
       },
       onSubmit: async (form, d, m) => {
         const val = (tr, k) => { const x = $(`[data-k="${k}"]`, tr); return !x ? null : x.type === 'checkbox' ? x.checked : U.norm(x.value); };
-        const staff = $$('[data-row]', form).map(tr => ({ name: val(tr, 'name'), email: (val(tr, 'email') || '').toLowerCase(), role: val(tr, 'role') || 'Admin', report: val(tr, 'report'), access: val(tr, 'access') || 'Owner', app: tr.hasAttribute('data-owner') ? true : val(tr, 'app'), notes: tr.dataset.notes || '' }))
+        const staff = $$('[data-row]', form).map(tr => ({ name: val(tr, 'name'), email: (val(tr, 'email') || '').toLowerCase(), title: val(tr, 'title') || '', role: val(tr, 'role') || 'Admin', report: val(tr, 'report'), access: val(tr, 'access') || 'Owner', app: tr.hasAttribute('data-owner') ? true : val(tr, 'app'), notes: tr.dataset.notes || '' }))
           .filter(p => p.name || p.email);
         staff.forEach((p, i) => {
-          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.email)) throw new D.RuleError(`Row ${i + 1}: enter the person's Google email.`);
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.email)) throw new D.RuleError(`${p.name || 'Row ' + (i + 1)}: enter the person's Google email.`);
           if (p.name.length < 2) throw new D.RuleError(`Enter a name for ${p.email}. It is recorded on every action.`);
         });
         const keep = new Set(staff.map(p => p.email));
@@ -838,10 +907,10 @@
     const num = (name, val, min, max, label, hint) => field(label, `<input type="number" name="${name}" value="${esc(val)}" min="${min}" max="${max}" step="1" required>`, hint);
     const admin = S.isShared() && S.user && S.user.role === 'Admin';
     return `${admin ? `<section class="panel"><h3>Staff &amp; Access</h3>
-        <p class="hint">Add nurses, physicians and ED leaders, set their role, choose who gets the shift report, and share the PulseED Register with them. Only Admins see this.</p>
+        <p class="hint">Add nurses, physicians and ED leaders (ED Director, unit heads, head nurse), set their job title and role, choose who gets the shift report, and share the PulseED Register with leaders. Paste a whole list at once for large teams. Only Admins see this; make other leaders Admin to share the work.</p>
         <div class="row"><button type="button" class="btn primary" data-act="staff">${ic('users')}Manage staff &amp; access</button></div></section>` : ''}
     <form id="setForm" class="settings" novalidate>
-      ${sup ? '' : `<div class="note">${ic('lock')} Read-only — sign in as a Charge Nurse or Admin to change department settings.</div>`}
+      ${sup ? '' : `<div class="note">${ic('lock')} Read-only — sign in as a Charge Nurse, ED Leader or Admin to change department settings.</div>`}
       <fieldset ${sup ? '' : 'disabled'}>
       <section class="panel"><h3>Department</h3><div class="g3">
         ${field('Department / site name', inp('siteName', s.siteName, 'maxlength="60" required'))}
@@ -881,7 +950,7 @@
       <button class="btn ghost" data-act="testchime">${ic('bell')}Test alert sound</button>
     </div></section>
     <section class="panel"><h3>Data</h3><p class="hint">Mode: <b>${S.device.mode === 'demo' ? 'Training / Demo' : 'Live'}</b> · ${Object.keys(S.state.patients).length} patient records · ${S.state.events.length} audit events · storage: ${esc(S.adapter.status().label)}</p><div class="row wrap">
-      <button class="btn ghost" data-act="x-backup">${ic('download')}Export full backup</button>
+      ${D.isSupervisor(S.user) ? `<button class="btn ghost" data-act="x-backup">${ic('download')}Export full backup</button>` : ''}
       <button class="btn ghost" data-act="import">${ic('upload')}Restore backup…</button>
       <button class="btn ghost" data-act="switchmode">${ic('shield')}Switch to ${S.device.mode === 'demo' ? 'live' : 'training / demo'} mode</button>
       ${S.device.mode === 'demo' ? `<button class="btn ghost" data-act="reseed">${ic('undo')}Reset demo data</button>` : ''}
@@ -938,6 +1007,7 @@
 
   // ------------------------------------------------------------------ click dispatcher
   const needUser = fn => (...a) => { if (!S.user) { UI.signInModal(); return; } fn(...a); };
+  const needLeader = fn => needUser((...a) => { if (!D.isSupervisor(S.user)) return UI.toast('Exports are for Charge Nurses, ED Leaders and Admins.', 'warn'); fn(...a); });
   const ACT = {
     nav: id => UI.go(id),
     open: needUser(UI.patientModal),
@@ -963,8 +1033,8 @@
       const r = D.verifyChain(S.state);
       r.ok ? UI.toast(`Audit trail intact — ${r.checked} events verified.`) : UI.toast(`AUDIT TRAIL ALTERED at event ${r.checked + 1} (${U.full(r.brokenAt.ts)} · ${r.brokenAt.eventType}). Inform the department lead.`, 'error');
     },
-    'x-master': needUser(UI.exportCsv), 'x-vitals': needUser(UI.exportCsv), 'x-bed': needUser(UI.exportCsv), 'x-proc': needUser(UI.exportCsv), 'x-audit': needUser(UI.exportCsv),
-    'x-backup': needUser(UI.exportBackup),
+    'x-master': needLeader(UI.exportCsv), 'x-vitals': needLeader(UI.exportCsv), 'x-bed': needLeader(UI.exportCsv), 'x-proc': needLeader(UI.exportCsv), 'x-audit': needLeader(UI.exportCsv),
+    'x-backup': needLeader(UI.exportBackup),
     import: needUser(() => {
       if (!D.isSupervisor(S.user)) return UI.toast('Only a Charge Nurse or Admin can restore a backup.', 'error');
       const i = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json' });
