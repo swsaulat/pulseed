@@ -43,8 +43,16 @@
     backend: { mode: 'local', supabaseUrl: '', supabaseAnonKey: '', facilityId: '' },
   };
 
+  // [start, name] of each shift. Doctors' 8-hour shifts set the emailed reports; nursing's 12-hour shifts are a view.
+  PE.SHIFT_PATTERNS = {
+    doctor: { label: 'Doctors', hours: 8, shifts: [['06:00', 'Morning'], ['14:00', 'Evening'], ['22:00', 'Night']] },
+    nursing: { label: 'Nursing', hours: 12, shifts: [['07:00', 'Day'], ['19:00', 'Night']] },
+  };
+
   // ED Leader = directors, unit heads, head nurses: the detailed view (analytics, audit, exports) and settings.
   // Admin = the same plus Staff & Access. Everyone else uses the station workflows.
   PE.ROLES = ['Nurse', 'Charge Nurse', 'Physician', 'Bed Coordinator', 'ED Leader', 'Admin'];
   PE.SUPERVISOR_ROLES = ['Charge Nurse', 'ED Leader', 'Admin'];
+  // Spreadsheets (Excel exports, the Google Sheet register) are for these roles only.
+  PE.LEADER_ROLES = ['ED Leader', 'Admin'];
 })(window.PulseED);

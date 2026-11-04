@@ -218,6 +218,31 @@
 
   const head = (title, desc, tools = '') => `<div class="vhead"><div><h2>${title}</h2><p>${desc}</p></div><div class="vtools">${tools}</div></div>`;
 
+  // Shifts follow this PC's clock, like every other time on the station. The doctor / nursing choice is saved per PC.
+  const offsetAt = ms => -new Date(ms).getTimezoneOffset();
+  const shiftPattern = () => PE.SHIFT_PATTERNS[S.device.shiftView === 'nursing' ? 'nursing' : 'doctor'];
+  const shiftToggle = attr => `<div class="seg" role="group" aria-label="Shift view">${Object.keys(PE.SHIFT_PATTERNS).map(k => { const p = PE.SHIFT_PATTERNS[k], on = p === shiftPattern(); return `<button type="button" class="${on ? 'on' : ''}" aria-pressed="${on}" ${attr(k)}>${esc(p.label)} · ${p.hours} h</button>`; }).join('')}</div>`;
+  function shiftPanel(t) {
+    const pat = shiftPattern();
+    const cur = D.shiftAt(pat.shifts, t, offsetAt(t));
+    const prevRef = cur.from - 1, prev = D.shiftAt(pat.shifts, prevRef, offsetAt(prevRef));
+    const a = D.shiftStats(S.state, st(), cur.from, cur.to, t), b = D.shiftStats(S.state, st(), prev.from, prev.to, t);
+    const mins = k => (k.median == null ? '—' : `${k.median} min <span class="hint">(n=${k.n})</span>`);
+    const pct = c => (c.pct == null ? '—' : `${c.pct}% <span class="hint">(n=${c.n})</span>`);
+    const row = (label, f) => `<tr><td>${label}</td><td class="b">${f(a)}</td><td>${f(b)}</td></tr>`;
+    return `<section class="panel shiftp">
+      <div class="ph"><h3>${ic('clock', 'tsky')}${esc(D.shiftTitle(cur))} <small class="hint">${U.dur(Math.max(0, Math.ceil((cur.to - t) / 60000)))} left</small></h3>${shiftToggle(k => `data-act="shiftview" data-id="${k}"`)}</div>
+      <div class="tw"><table><thead><tr><th>Measure</th><th>This shift so far</th><th>Previous shift (${esc(prev.label)})</th></tr></thead><tbody>
+        ${row('Registered on the board', x => x.registered)}
+        ${row('Left the waiting area', x => x.exited)}
+        ${row('LWBS / left against advice', x => `${x.lwbs} (${x.lwbsPct}%)`)}
+        ${row(`Reassessments on time (target ≥ ${st().complianceTargetPct}%)`, x => pct(x.compliance))}
+        ${row('Median time to bed allocation', x => mins(x.bedAlloc))}
+        ${row('Median time to bed placement', x => mins(x.bedPlace))}
+        ${row('Median procedure turnaround', x => mins(x.procTat))}
+      </tbody></table></div></section>`;
+  }
+
   const VIEWS = {
     dashboard: {
       head: () => '',
@@ -266,6 +291,7 @@
             ${card('Due Soon', L.dueSoon.length, 'Within the due-soon window', 'clock', L.dueSoon.length ? 'amber' : 'grey', 'vitals')}
             ${card('Needs Disposition', L.noWf.length, L.noWf.length ? '<span class="tamber">No active workflow — record exit</span>' : 'All patients have a workflow', 'door', L.noWf.length ? 'amber' : 'grey', 'patients')}
           </section>
+          ${shiftPanel(t)}
           <section class="tri">
             <div class="panel"><div class="ph"><h3>${ic('heart', 'tsky')}Vitals Monitoring (${L.vit.length})</h3><button class="link" data-act="nav" data-id="vitals">View all →</button></div>
               <div class="tw"><table><thead><tr><th>URN</th><th>CTAS</th><th>Last reass.</th><th class="r">Next due</th><th></th></tr></thead><tbody>${vitRows}</tbody></table></div>
@@ -382,7 +408,7 @@
             ${chart('Allocation vs Placement SPC', 'bed', 'tamber', 'Hourly mean time to allocation and to physical placement.', c2)}
             ${chart('Procedure Turnaround SPC (Hourly)', 'syringe', 'tblue', 'Hourly mean request-to-done time.', c3)}
           </section>
-          <section class="panel">
+          ${!D.isLeader(S.user) ? `<p class="note">${ic('lock')} Spreadsheet exports are for ED Leaders and Admins.</p>` : `<section class="panel">
             <div class="ph"><h3>${ic('download', 'tsky')}Spreadsheet &amp; Data Stream Exports</h3>
               <label class="check"><input type="checkbox" id="deid" ${UI.vs.deid !== false ? 'checked' : ''}> De-identify (initials instead of names)</label></div>
             <p class="hint">Exports contain patient information. Store them only in approved locations. Every export is recorded in the audit trail.</p>
@@ -390,7 +416,7 @@
               ${ex('x-master', 'Patient Master Table')}${ex('x-vitals', 'Vitals Episodes')}${ex('x-bed', 'Bed Episodes')}${ex('x-proc', 'Procedure Episodes')}${ex('x-audit', 'Event Audit Trail Log', 'tgreen')}
               <button class="export" data-act="x-backup">${ic('shield', 'tamber')}<span>Full backup (all data)</span><small>.JSON</small></button>
             </div>
-          </section>`;
+          </section>`}`;
       },
       after() { const d = $('#deid'); if (d) d.onchange = () => (UI.vs.deid = d.checked); },
     },
@@ -778,16 +804,23 @@
 
   // ------------------------------------------------------------------ modal: SBAR handoff
   UI.handoffModal = () => {
-    const make = notes => D.sbar(S.state, st(), now(), { privacy: S.device.privacy, user: S.user && S.user.name, demo: S.device.mode === 'demo', notes });
+    const make = notes => { const t = now(); return D.sbar(S.state, st(), t, { privacy: S.device.privacy, user: S.user && S.user.name, demo: S.device.mode === 'demo', notes, window: D.handoffWindow(shiftPattern().shifts, t, offsetAt(t)) }); };
     UI.modal({
       title: 'One-Click Shift Handoff Generator (SBAR Format)', icon: 'clip', wide: true, submit: 'Copy SBAR Report',
       extraButtons: `<button type="button" class="btn ghost" data-print>Print</button><button type="button" class="btn ghost" data-dl>Download .txt</button>`,
       body: `<p class="hint">Built from the live board — every count and patient listed is real. ${S.device.privacy ? 'Names are shown as initials (privacy screen is on).' : 'Turn on the privacy screen to replace names with initials.'}</p>
+        ${shiftToggle(k => `data-sv="${k}"`)}
         <textarea class="sbar" readonly rows="18">${esc(make(''))}</textarea>
         ${field('Outgoing nurse notes (added to the report)', `<textarea name="notes" rows="3" maxlength="1000"></textarea>`)}`,
       onMount: (el, form) => {
         const ta = $('.sbar', el);
         form.elements.notes.oninput = () => (ta.value = make(form.elements.notes.value));
+        $$('[data-sv]', el).forEach(b => (b.onclick = () => {
+          S.device.shiftView = b.dataset.sv; S.saveDevice();
+          $$('[data-sv]', el).forEach(x => { const on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); });
+          ta.value = make(form.elements.notes.value);
+          UI.renderBody();
+        }));
         $('[data-print]', el).onclick = () => { const w = window.open('', '_blank'); if (!w) return UI.toast('Pop-up blocked — allow pop-ups to print.', 'warn'); w.document.write(`<pre style="font:12px/1.45 ui-monospace,Consolas,monospace;white-space:pre-wrap">${esc(ta.value)}</pre>`); w.document.close(); w.print(); };
         $('[data-dl]', el).onclick = () => U.download(`SBAR_${U.stamp()}.txt`, ta.value, 'text/plain;charset=utf-8');
       },
@@ -804,8 +837,8 @@
     ['ED Physician', 'Physician', false, 'None'], ['Bed Coordinator', 'Bed Coordinator', false, 'None'],
   ];
   const ROLE_HELP = `<b>Nurse · Physician · Bed Coordinator:</b> the station workflows (admit, reassess, beds, procedures, exits).
-    <b>Charge Nurse:</b> the same, plus analytics, audit trail, exports, settings and reopening exits.
-    <b>ED Leader:</b> the detailed view for directors, unit heads and head nurses (same as Charge Nurse).
+    <b>Charge Nurse:</b> the same, plus analytics, audit trail, settings and reopening exits.
+    <b>ED Leader:</b> the detailed view for directors, unit heads and head nurses: all of that, plus Excel exports and the Google Sheet.
     <b>Admin:</b> everything, plus this Staff &amp; Access page. Give it to the leaders who should manage staff with you.`;
 
   const isTraining = () => !!(window.PULSEED_SITE || {}).training;
@@ -813,7 +846,7 @@
   // Training copy of Staff & Access: the same page and checks as the live one, kept in this browser.
   // Nobody is shared, emailed or given access, so leaders can practise before any real staff are added.
   const practiceStaff = {
-    key: 'pulseed:v2:practiceStaff', owner: 'owner@example.org', limits: { staff: 500, sheet: 100, report: 45 },
+    key: 'pulseed:v2:practiceStaff', owner: 'owner@example.org', limits: { staff: 500, sheet: 100, report: 30 },
     seed: () => [
       { name: 'You (system owner)', email: 'owner@example.org', title: 'System owner', role: 'Admin', report: true, access: 'Owner', app: true, owner: true },
       { name: 'Dr. A. Director', email: 'ed.director@example.org', title: 'ED Director', role: 'ED Leader', report: true, access: 'Viewer', app: true },
@@ -831,6 +864,7 @@
         seen[p.email] = true;
         if (p.email === this.owner) Object.assign(p, { owner: true, role: 'Admin', access: 'Owner', app: true });
         else if (!PE.ROLES.includes(p.role)) throw new D.RuleError(`Choose a role for ${p.email}.`);
+        else if (!PE.LEADER_ROLES.includes(p.role)) p.access = 'None';
       });
       if (!seen[this.owner]) list.unshift(this.seed()[0]);
       if (list.length > L.staff) throw new D.RuleError(`The staff list is limited to ${L.staff} people.`);
@@ -849,7 +883,7 @@
     const src = practice ? practiceStaff : S.adapter;
     let data;
     try { data = await src.staffList(); } catch (e) { return UI.toast(e.message, 'error'); }
-    const lim = data.limits || { staff: 500, sheet: 100, report: 45 };
+    const lim = data.limits || { staff: 500, sheet: 100, report: 30 };
     const orig = {}; data.staff.forEach(p => (orig[p.email] = p));
     const opts = (list, cur) => list.map(v => `<option${v === cur ? ' selected' : ''}>${esc(v)}</option>`).join('');
     const row = (p = { role: 'Nurse', access: 'None', app: true, report: false }) => `<tr data-row ${p.owner ? 'data-owner' : ''} data-notes="${esc(p.notes || '')}">
@@ -858,7 +892,7 @@
       <td><input data-k="title" list="dl-titles" value="${esc(p.title || '')}" maxlength="60" placeholder="e.g. ED Head Nurse" aria-label="Job title"></td>
       <td>${p.owner ? '<b>Admin</b> (owner)' : `<select data-k="role" aria-label="Role">${opts(data.roles, p.role)}</select>`}</td>
       <td class="c"><input type="checkbox" data-k="report" ${p.report ? 'checked' : ''} aria-label="Gets the shift report"></td>
-      <td>${p.owner ? 'Owner' : `<select data-k="access" aria-label="Sheet access">${opts(['Editor', 'Viewer', 'None'], p.access)}</select>`}</td>
+      <td>${p.owner ? 'Owner' : `<select data-k="access" aria-label="Sheet access" ${PE.LEADER_ROLES.includes(p.role) ? '' : 'disabled'}>${opts(['Editor', 'Viewer', 'None'], PE.LEADER_ROLES.includes(p.role) ? p.access : 'None')}</select>`}</td>
       <td class="c">${p.owner ? '✓' : `<input type="checkbox" data-k="app" ${p.app !== false ? 'checked' : ''} aria-label="Can sign in to PulseED">`}</td>
       <td class="r">${p.owner ? '' : `<button type="button" class="btn sm ghost" data-del title="Remove">${ic('x')}</button>`}</td></tr>`;
     let confirmed = false;
@@ -866,7 +900,7 @@
       title: 'Staff &amp; Access', icon: 'users', wide: true, submit: 'Save &amp; share',
       body: `${practice ? `<p class="note">${ic('shield')} <b>Practice copy (training)</b>: works exactly like the real page, but nothing is shared, emailed or given access. The emails below are examples.</p>` : ''}<p class="hint">Who can sign in to PulseED, what they can do, who gets the shift report by email, and who can open the PulseED Register in Google Drive. Each person signs in with the Google email entered here. Saving shares the register to match and removes Drive access from anyone taken off the list or set to None.</p>
         <details class="rolehelp"><summary>What each role can do</summary><p class="hint">${ROLE_HELP}</p>
-          <p class="hint"><b>Sheet access</b> is for leaders only: nurses work in PulseED and do not need the Google Sheet. <b>Shift report</b> is limited to ${lim.report} people (Gmail's daily limit); for a bigger list, enter a Google Group address as one person.</p></details>
+          <p class="hint"><b>Sheet access</b> is for ED Leaders and Admins only; everyone else works in PulseED. <b>Shift report</b> is limited to ${lim.report} people (Gmail's daily limit); for a bigger list, enter a Google Group address as one person.</p></details>
         <datalist id="dl-titles">${JOB_TITLES.map(t => `<option value="${esc(t[0])}">`).join('')}</datalist>
         <div class="row wrap"><input type="search" data-q placeholder="Search name, email, title or role…" aria-label="Search staff" class="grow">
           <button type="button" class="btn ghost" data-add>${ic('plus')}Add person</button>
@@ -918,6 +952,9 @@
           const t = e.target.closest('[data-k="title"]'), tr = e.target.closest('tr');
           const preset = t && JOB_TITLES.find(x => x[0] === U.norm(t.value));
           if (preset && !tr.hasAttribute('data-owner')) { $('[data-k="role"]', tr).value = preset[1]; $('[data-k="report"]', tr).checked = preset[2]; $('[data-k="access"]', tr).value = preset[3]; }
+          // The Google Sheet is for ED Leaders and Admins only.
+          const role = $('[data-k="role"]', tr), access = $('[data-k="access"]', tr);
+          if (role && access) { const lead = PE.LEADER_ROLES.includes(role.value); access.disabled = !lead; if (!lead) access.value = 'None'; }
           touched();
         });
         count();
@@ -996,7 +1033,7 @@
       <button class="btn ghost" data-act="testchime">${ic('bell')}Test alert sound</button>
     </div></section>
     <section class="panel"><h3>Data</h3><p class="hint">Mode: <b>${S.device.mode === 'demo' ? 'Training / Demo' : 'Live'}</b> · ${Object.keys(S.state.patients).length} patient records · ${S.state.events.length} audit events · storage: ${esc(S.adapter.status().label)}</p><div class="row wrap">
-      ${D.isSupervisor(S.user) ? `<button class="btn ghost" data-act="x-backup">${ic('download')}Export full backup</button>` : ''}
+      ${D.isLeader(S.user) ? `<button class="btn ghost" data-act="x-backup">${ic('download')}Export full backup</button>` : ''}
       <button class="btn ghost" data-act="import">${ic('upload')}Restore backup…</button>
       <button class="btn ghost" data-act="switchmode">${ic('shield')}Switch to ${S.device.mode === 'demo' ? 'live' : 'training / demo'} mode</button>
       ${S.device.mode === 'demo' ? `<button class="btn ghost" data-act="reseed">${ic('undo')}Reset demo data</button>` : ''}
@@ -1053,7 +1090,7 @@
 
   // ------------------------------------------------------------------ click dispatcher
   const needUser = fn => (...a) => { if (!S.user) { UI.signInModal(); return; } fn(...a); };
-  const needLeader = fn => needUser((...a) => { if (!D.isSupervisor(S.user)) return UI.toast('Exports are for Charge Nurses, ED Leaders and Admins.', 'warn'); fn(...a); });
+  const needLeader = fn => needUser((...a) => { if (!D.isLeader(S.user)) return UI.toast('Spreadsheet exports are for ED Leaders and Admins.', 'warn'); fn(...a); });
   const ACT = {
     nav: id => UI.go(id),
     open: needUser(UI.patientModal),
@@ -1064,6 +1101,7 @@
     reopen: needUser(UI.reopenModal),
     new: needUser(UI.newPatientModal),
     handoff: needUser(UI.handoffModal),
+    shiftview: id => { S.device.shiftView = id === 'nursing' ? 'nursing' : 'doctor'; S.saveDevice(); UI.refresh(); },
     staff: needUser(UI.staffModal),
     privacy: () => { S.device.privacy = !S.device.privacy; S.saveDevice(); UI.refresh(); },
     sound: () => { S.device.sound = !S.device.sound; S.saveDevice(); if (S.device.sound && PE.audio) PE.audio.chime('test'); UI.renderChrome(); UI.toast(S.device.sound ? 'Audio alerts on.' : 'Audio alerts muted on this station. Visual alerts continue.', S.device.sound ? 'success' : 'warn'); },

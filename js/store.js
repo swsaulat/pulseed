@@ -211,7 +211,7 @@
     error: null,
   });
 
-  S.device = Object.assign({ deviceId: U.uuid().slice(0, 8), deviceName: '', mode: null, privacy: false, sound: true, theme: 'light' }, U.ls.get(`${ROOT}:device`) || {});
+  S.device = Object.assign({ deviceId: U.uuid().slice(0, 8), deviceName: '', mode: null, privacy: false, sound: true, theme: 'light', shiftView: 'doctor' }, U.ls.get(`${ROOT}:device`) || {});
   S.saveDevice = () => { try { U.ls.set(`${ROOT}:device`, S.device); } catch (e) { /* non-critical */ } };
   S.saveDevice();
 

@@ -31,6 +31,7 @@
   D.emptyState = () => ({ schema: 2, rev: 0, patients: {}, events: [], chainAnchor: '0000000000000000', updatedAt: null });
 
   D.isSupervisor = user => !!user && PE.SUPERVISOR_ROLES.includes(user.role);
+  D.isLeader = user => !!user && PE.LEADER_ROLES.includes(user.role);
   D.activePatients = state => Object.values(state.patients).filter(p => p.status === 'active');
   D.activeWfs = p => D.WF_KEYS.filter(k => p.workflows[k] && p.workflows[k].active);
 
@@ -487,6 +488,72 @@
     };
   };
 
+  // ------------------------------------------------------------------ shifts
+
+  /**
+   * The shift containing `ms`. shifts = [[ 'HH:mm', name ], ...]; offsetMin = minutes east of UTC at the site.
+   * A shift runs from its start up to (not including) the next start, across midnight when needed.
+   */
+  D.shiftAt = (shifts, ms, offsetMin) => {
+    const list = shifts.map(x => ({ t: x[0], name: x[1] || '', m: Number(x[0].slice(0, 2)) * 60 + Number(x[0].slice(3)) })).sort((a, b) => a.m - b.m);
+    const mins = Math.floor(ms / 60000) + offsetMin, day = ((mins % 1440) + 1440) % 1440;
+    let i = list.length - 1; // before the first start of the day = still the last shift of yesterday
+    list.forEach((x, k) => { if (x.m <= day) i = k; });
+    const cur = list[i], next = list[(i + 1) % list.length];
+    const from = (mins - ((day - cur.m + 1440) % 1440) - offsetMin) * 60000;
+    return { name: cur.name, label: `${cur.t}–${next.t}`, from, to: from + ((next.m - cur.m + 1440) % 1440 || 1440) * 60000 };
+  };
+  D.shiftTitle = w => `${w.name ? w.name + ' shift' : 'Shift'} ${w.label}`;
+
+  /** What happened from `from` up to (not including) `to`; later events belong to the next shift. */
+  D.shiftStats = (state, s, from, to, now = Date.now()) => {
+    const end = Math.min(to, now), inWin = ms => !isNaN(ms) && ms >= from && ms < end;
+    const all = Object.values(state.patients);
+    const exited = all.filter(p => p.status === 'exited' && p.exit && inWin(U.toMs(p.exit.time)));
+    const byExit = {};
+    exited.forEach(p => { byExit[p.exit.label] = (byExit[p.exit.label] || 0) + 1; });
+    const lwbs = exited.filter(p => p.exit.type === 'lwbs' || p.exit.type === 'dama').length;
+    const alloc = [], place = [], tat = [];
+    episodes(state, 'bed').forEach(({ e }) => {
+      const added = U.toMs(e.addedTime), fa = U.toMs(e.firstAllocationTime), pt = U.toMs(e.placementTime);
+      if (inWin(fa)) alloc.push((fa - added) / 60000);
+      if (e.physicallyPlaced && inWin(pt)) place.push((pt - added) / 60000);
+    });
+    episodes(state, 'procedure').forEach(({ e }) => {
+      const ct = U.toMs(e.completionTime);
+      if (e.status === 'Done' && inWin(ct)) tat.push((ct - U.toMs(e.requestTime)) / 60000);
+    });
+    let due = 0, onTime = 0;
+    const grace = s.complianceGraceMin * 60000;
+    episodes(state, 'vitals').forEach(({ e, ctas }) => {
+      const iv = s.ctasIntervals[ctas];
+      if (!(iv > 0)) return;
+      const times = [U.toMs(e.startTime), ...(e.reassessments || []).map(U.toMs)].sort((x, y) => x - y);
+      const stop = e.endTime ? U.toMs(e.endTime) : now;
+      times.forEach((t, i) => {
+        const d = t + iv * 60000;
+        if (d > stop || !inWin(d)) return; // same rule as D.metrics: only intervals that fell due during the episode
+        due++; if (i + 1 < times.length && times[i + 1] <= d + grace) onTime++;
+      });
+    });
+    const kpi = a => ({ n: a.length, mean: U.round(U.mean(a)), median: U.round(U.median(a)) });
+    return {
+      registered: all.filter(p => inWin(U.toMs(p.createdAt))).length,
+      exited: exited.length, lwbs, lwbsPct: exited.length ? Math.round(lwbs / exited.length * 100) : 0,
+      byExit: Object.keys(byExit).sort((a, b) => byExit[b] - byExit[a]).map(k => ({ label: k, n: byExit[k] })),
+      bedAlloc: kpi(alloc), bedPlace: kpi(place), procTat: kpi(tat),
+      compliance: { n: due, pct: due ? U.round((onTime / due) * 100) : null },
+    };
+  };
+
+  /** Period the handoff summarises. In the first hour after a changeover the outgoing shift is the one being handed over. */
+  D.handoffWindow = (shifts, now, offsetMin) => {
+    const cur = D.shiftAt(shifts, now, offsetMin);
+    if (now - cur.from >= 3600000) return { from: cur.from, to: now, title: `${D.shiftTitle(cur)}, so far` };
+    const prev = D.shiftAt(shifts, cur.from - 1, offsetMin);
+    return { from: prev.from, to: now, title: `${D.shiftTitle(prev)}, and since` };
+  };
+
   /** Individuals (XmR) control limits. Signals: a point outside the limits, or 8 consecutive points on one side of the mean. */
   D.xmr = values => {
     const pts = values.map((v, i) => [i, v]).filter(x => x[1] != null);
@@ -518,8 +585,8 @@
     const notReady = proc.filter(p => !D.procReadiness(p.workflows.procedure).ready);
     const noWf = act.filter(p => !D.activeWfs(p).length);
     const m = D.metrics(state, s, now);
-    const since = now - 12 * 3600000;
-    const exited = Object.values(state.patients).filter(p => p.status === 'exited' && U.toMs(p.exit.time) >= since);
+    const since = opts.window ? opts.window.from : now - 12 * 3600000, until = opts.window ? opts.window.to : Infinity;
+    const exited = Object.values(state.patients).filter(p => p.status === 'exited' && U.toMs(p.exit.time) >= since && U.toMs(p.exit.time) < until);
     const placed = exited.filter(p => p.exit.type === 'placed').length;
     const lwbs = exited.filter(p => p.exit.type === 'lwbs' || p.exit.type === 'dama').length;
     const L = [];
@@ -531,7 +598,7 @@
     L.push(`- OVERDUE reassessments: ${overdue.length}`);
     overdue.forEach(p => L.push(`    • ${show(p)} ${p.ctas} — ${D.vitalsTiming(p, s, now).label}`));
     if (ctas1.length) { L.push(`- CTAS 1 IN WAITING AREA: ${ctas1.length}`); ctas1.forEach(p => L.push(`    • ${show(p)} — ${p.diagnosis}`)); }
-    L.push('', '[B] BACKGROUND (last 12 h)');
+    L.push('', `[B] BACKGROUND (${opts.window ? opts.window.title : 'last 12 h'})`);
     L.push(`- Exited waiting area: ${exited.length} (placed on ED bed: ${placed}, LWBS/AMA: ${lwbs})`);
     L.push(`- Last 24 h: bed allocation median ${m.bedAlloc.median ?? '—'} min (n=${m.bedAlloc.n}); placement median ${m.bedPlace.median ?? '—'} min (n=${m.bedPlace.n}); procedure TAT median ${m.procTat.median ?? '—'} min (n=${m.procTat.n}); reassessment compliance ${m.compliance.pct ?? '—'}% (n=${m.compliance.n}).`);
     L.push('', '[A] ASSESSMENT');
