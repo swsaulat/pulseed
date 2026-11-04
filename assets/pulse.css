@@ -311,6 +311,13 @@ textarea.sbar { width: 100%; font: 12px/1.5 var(--mono); background: var(--panel
 }
 @media print { .top, #side, #alertBar, #toasts, .modebar { display: none; } #main { overflow: visible; } }
 
+/* Doctor / nursing shift toggle */
+.seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 9px; overflow: hidden; }
+.seg button { border: 0; background: var(--panel); color: var(--ink2); padding: 7px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; min-height: 34px; }
+.seg button + button { border-left: 1px solid var(--line2); }
+.seg button.on { background: #0369a1; color: #fff; }
+.shiftp { margin-bottom: 14px; } .shiftp .ph { flex-wrap: wrap; gap: 8px; } .shiftp h3 small { font-weight: 400; margin-left: 6px; }
+
 /* Training / guide links in the sidebar footer */
 .sidefoot .learn { display: grid; gap: 4px; padding: 6px 0; }
 .sidefoot .learn a { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
