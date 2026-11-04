@@ -175,6 +175,8 @@
       return { events: r.events || [], patient: r.patient };
     }
     async logExport(what, deid) { await this.call('logExport', { what, deid, device: S.ctx().device }); this.since.rev = null; }
+    // Handover PDF of a shift (the server checks the role and writes the audit entry).
+    async shiftPdf(pattern, which) { const r = await this.call('report.pdf', { pattern, which, device: S.ctx().device }, 90000); this.since.rev = null; return r; }
     // Staff & Access (Admin only; the server checks). Saving also shares the register in Drive, which can take a while.
     staffList() { return this.call('staff.list'); }
     async staffSave(staff) { const r = await this.call('staff.save', { staff, device: S.ctx().device }, 330000); this.since.rev = null; return r; }

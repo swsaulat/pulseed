@@ -50,8 +50,10 @@
   };
 
   // ED Leader = directors, unit heads, head nurses: the detailed view (analytics, audit, exports) and settings.
-  // Admin = the same plus Staff & Access. Everyone else uses the station workflows.
-  PE.ROLES = ['Nurse', 'Charge Nurse', 'Physician', 'Bed Coordinator', 'ED Leader', 'Admin'];
+  // Admin = the same plus Staff & Access. Physician TL = physician team leader. Everyone else uses the station workflows.
+  PE.ROLES = ['Nurse', 'Charge Nurse', 'Physician', 'Physician TL', 'Bed Coordinator', 'ED Leader', 'Admin'];
+  // Who can export the handover PDF for each shift pattern.
+  PE.SHIFT_EXPORT_ROLES = { nursing: ['Charge Nurse', 'ED Leader', 'Admin'], doctor: ['Physician TL', 'ED Leader', 'Admin'] };
   PE.SUPERVISOR_ROLES = ['Charge Nurse', 'ED Leader', 'Admin'];
   // Spreadsheets (Excel exports, the Google Sheet register) are for these roles only.
   PE.LEADER_ROLES = ['ED Leader', 'Admin'];

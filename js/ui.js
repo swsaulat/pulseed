@@ -230,6 +230,11 @@
     const mins = k => (k.median == null ? '—' : `${k.median} min <span class="hint">(n=${k.n})</span>`);
     const pct = c => (c.pct == null ? '—' : `${c.pct}% <span class="hint">(n=${c.n})</span>`);
     const row = (label, f) => `<tr><td>${label}</td><td class="b">${f(a)}</td><td>${f(b)}</td></tr>`;
+    const can = canExportShift(S.device.shiftView === 'nursing' ? 'nursing' : 'doctor');
+    const other = canExportShift(S.device.shiftView === 'nursing' ? 'doctor' : 'nursing');
+    const pdf = can
+      ? `<div class="row wrap"><button class="btn primary" data-act="shiftpdf" data-id="previous">${ic('download')}Previous shift (${esc(prev.label)}) PDF</button><button class="btn ghost" data-act="shiftpdf" data-id="current">${ic('download')}This shift so far PDF</button></div>`
+      : other ? `<p class="hint">To export your handover PDF, switch to ${esc(PE.SHIFT_PATTERNS[S.device.shiftView === 'nursing' ? 'doctor' : 'nursing'].label)} · ${PE.SHIFT_PATTERNS[S.device.shiftView === 'nursing' ? 'doctor' : 'nursing'].hours} h.</p>` : '';
     return `<section class="panel shiftp">
       <div class="ph"><h3>${ic('clock', 'tsky')}${esc(D.shiftTitle(cur))} <small class="hint">${U.dur(Math.max(0, Math.ceil((cur.to - t) / 60000)))} left</small></h3>${shiftToggle(k => `data-act="shiftview" data-id="${k}"`)}</div>
       <div class="tw"><table><thead><tr><th>Measure</th><th>This shift so far</th><th>Previous shift (${esc(prev.label)})</th></tr></thead><tbody>
@@ -240,8 +245,40 @@
         ${row('Median time to bed allocation', x => mins(x.bedAlloc))}
         ${row('Median time to bed placement', x => mins(x.bedPlace))}
         ${row('Median procedure turnaround', x => mins(x.procTat))}
-      </tbody></table></div></section>`;
+      </tbody></table></div>${pdf}</section>`;
   }
+  const canExportShift = key => !!S.user && PE.SHIFT_EXPORT_ROLES[key].includes(S.user.role);
+
+  /** Handover PDF. Live: the server builds a real PDF file. Training: a print view, saved with the browser's "Save as PDF". */
+  UI.shiftPdf = async which => {
+    const key = S.device.shiftView === 'nursing' ? 'nursing' : 'doctor';
+    if (!canExportShift(key)) return UI.toast(`Your role cannot export the ${PE.SHIFT_PATTERNS[key].hours}-hour shift report.`, 'warn');
+    if (S.isShared()) {
+      UI.toast('Preparing the PDF…');
+      try {
+        const r = await S.adapter.shiftPdf(key, which);
+        const bytes = Uint8Array.from(atob(r.pdf), c => c.charCodeAt(0));
+        const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })), download: r.fileName });
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+        UI.toast(`${r.title}: PDF downloaded.`);
+      } catch (e) { UI.toast(e.message, 'error'); }
+      return;
+    }
+    const t = now(), pat = PE.SHIFT_PATTERNS[key].shifts, cur = D.shiftAt(pat, t, offsetAt(t));
+    const ref = which === 'previous' ? cur.from - 1 : t, w = D.shiftAt(pat, ref, offsetAt(ref));
+    const to = which === 'previous' ? w.to : t, title = D.shiftTitle(w) + (which === 'previous' ? '' : ', so far');
+    const x = D.shiftStats(S.state, st(), w.from, to, t);
+    const k = v => (v.median == null ? '—' : `${v.median} min (n=${v.n})`);
+    const page = window.open('', '_blank');
+    if (!page) return UI.toast('Pop-up blocked — allow pop-ups to print.', 'warn');
+    page.document.write(`<!doctype html><meta charset="utf-8"><title>PulseED ${esc(title)}</title><style>@page{size:A4;margin:12mm}body{font:13px Arial,sans-serif;color:#0f172a}table{width:100%;border-collapse:collapse;margin:10px 0}td{border-bottom:1px solid #e2e8f0;padding:5px}pre{white-space:pre-wrap;font:11px Consolas,monospace}</style>
+      <h1>PulseED Shift Report</h1><p><b>${esc(title)}</b>${S.device.mode === 'demo' ? ' · TRAINING: synthetic data' : ''}</p>
+      <table><tr><td>Registered on the board</td><td>${x.registered}</td></tr><tr><td>Left the waiting area</td><td>${x.exited}</td></tr><tr><td>LWBS / left against advice</td><td>${x.lwbs} (${x.lwbsPct}%)</td></tr>
+      <tr><td>Reassessments on time</td><td>${x.compliance.pct == null ? '—' : x.compliance.pct + '%'}</td></tr><tr><td>Median time to bed allocation</td><td>${k(x.bedAlloc)}</td></tr><tr><td>Median time to bed placement</td><td>${k(x.bedPlace)}</td></tr><tr><td>Median procedure turnaround</td><td>${k(x.procTat)}</td></tr></table>
+      <pre>${esc(D.sbar(S.state, st(), t, { privacy: true, user: S.user.name, demo: S.device.mode === 'demo', window: { from: w.from, to, title } }))}</pre>`);
+    page.document.close(); page.print();
+  };
 
   const VIEWS = {
     dashboard: {
@@ -834,11 +871,12 @@
     ['ED Director', 'ED Leader', true, 'Viewer'], ['Adult ED Unit Head', 'ED Leader', true, 'Viewer'], ['Pediatric ED Unit Head', 'ED Leader', true, 'Viewer'],
     ['ED Head Nurse', 'ED Leader', true, 'Viewer'], ['Assistant Head Nurse', 'ED Leader', true, 'Viewer'], ['Nurse Educator', 'ED Leader', false, 'None'],
     ['Quality / Patient Flow Coordinator', 'ED Leader', false, 'Viewer'], ['Charge Nurse', 'Charge Nurse', false, 'None'], ['Staff Nurse', 'Nurse', false, 'None'],
-    ['ED Physician', 'Physician', false, 'None'], ['Bed Coordinator', 'Bed Coordinator', false, 'None'],
+    ['ED Physician', 'Physician', false, 'None'], ['Physician Team Leader', 'Physician TL', false, 'None'], ['Bed Coordinator', 'Bed Coordinator', false, 'None'],
   ];
   const ROLE_HELP = `<b>Nurse · Physician · Bed Coordinator:</b> the station workflows (admit, reassess, beds, procedures, exits).
-    <b>Charge Nurse:</b> the same, plus analytics, audit trail, settings and reopening exits.
-    <b>ED Leader:</b> the detailed view for directors, unit heads and head nurses: all of that, plus Excel exports and the Google Sheet.
+    <b>Physician TL:</b> the same, plus the handover PDF for each 8-hour shift.
+    <b>Charge Nurse:</b> the station workflows, plus the handover PDF for each 12-hour shift, analytics, audit trail, settings and reopening exits.
+    <b>ED Leader:</b> the detailed view for directors, unit heads and head nurses: all of that, handover PDFs for both shift patterns, plus Excel exports and the Google Sheet.
     <b>Admin:</b> everything, plus this Staff &amp; Access page. Give it to the leaders who should manage staff with you.`;
 
   const isTraining = () => !!(window.PULSEED_SITE || {}).training;
@@ -1101,6 +1139,7 @@
     reopen: needUser(UI.reopenModal),
     new: needUser(UI.newPatientModal),
     handoff: needUser(UI.handoffModal),
+    shiftpdf: needUser(id => UI.shiftPdf(id)),
     shiftview: id => { S.device.shiftView = id === 'nursing' ? 'nursing' : 'doctor'; S.saveDevice(); UI.refresh(); },
     staff: needUser(UI.staffModal),
     privacy: () => { S.device.privacy = !S.device.privacy; S.saveDevice(); UI.refresh(); },
