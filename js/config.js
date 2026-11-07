@@ -22,6 +22,9 @@
     bedWaitRedMin: 120,
     procWaitAmberMin: 60,
     procWaitRedMin: 120,
+    // Boarding = still on an ED bed after the admission / referral decision. Red = overstay alarm (4 h).
+    boardingAmberMin: 180,
+    boardingRedMin: 240,
 
     chimeRepeatMin: 2,
     autoLockMin: 15,
@@ -29,6 +32,8 @@
     eventRetentionHours: 168,
 
     teams: ['Team A', 'Team B', 'Team C'],
+    // Offered when assigning or changing a patient's physician; any other name can also be typed.
+    physicians: [],
     specialties: ['Cardiology', 'Emergency Medicine', 'General Surgery', 'Internal Medicine', 'Neurology', 'Obstetrics & Gynaecology',
       'Orthopaedics', 'Paediatrics', 'Plastic Surgery / Minor Care', 'Psychiatry', 'Respiratory', 'Trauma Surgery', 'Urology'],
     procedures: ['CT Head / Brain', 'CT Abdomen / Pelvis', 'CT Coronary Angiogram', 'CT Pulmonary Angiogram', 'Portable Chest X-Ray',

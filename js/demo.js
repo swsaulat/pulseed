@@ -50,6 +50,14 @@
         if (wf.bed) add(bedAlloc, 'ALLOCATE_BED', { id, bed: pick(settings.beds), override: true }, STAFF[3]);
         const lwbs = !wf.bed && r() < 0.08;
         add(end, 'EXIT', wf.bed ? { id, type: 'placed', override: true } : { id, type: lwbs ? 'lwbs' : 'discharged', reason: lwbs ? 'Not found when called ×3' : '' });
+        if (wf.bed) { // on the ED bed: most are admitted / referred and later move on; every one is released before now
+          const dec = end + between(25, 90) * M, rel = Math.min(dec + between(60, 330) * M, now - between(3, 40) * M);
+          if (r() < 0.75 && rel > dec + 10 * M) {
+            const unit = pick(['Ward', 'Ward', 'Ward', 'ICU', 'CCU / HDU']);
+            add(dec, 'ED_DECISION', { id, decision: r() < 0.7 ? 'admit' : 'refer', specialty: pick(settings.specialties), unit }, STAFF[4]);
+            add(rel, 'ED_RELEASE', { id, type: { Ward: 'ward', ICU: 'icu', 'CCU / HDU': 'ccu' }[unit], note: 'Accepted by the receiving team; moved with handover to the ward nurse.' }, STAFF[2]);
+          } else add(Math.min(end + between(60, 180) * M, now - between(3, 40) * M), 'ED_RELEASE', { id, type: 'home', note: 'Treated in the ED and discharged home with advice.' }, STAFF[2]);
+        }
       }
 
       // ---------- current waiting area: the original prototype's 7 patients (same timings), plus 3 that show new safety features
@@ -113,14 +121,32 @@
       ];
       cur.forEach(([p, f]) => f(p));
 
+      // ---------- patients on ED beds now: two boarding overstays, one nearly there, one just referred, two without a decision yet
+      const onBed = (p, admitMin, placeMin, bed, spec, dec) => {
+        add(now - admitMin * M, 'ADMIT', Object.assign({}, p, { workflows: { vitals: true, bed: true }, intendedSpecialty: spec }), STAFF[0]);
+        add(now - placeMin * M, 'EXIT', { id: p.id, type: 'placed', bed, override: true }, STAFF[2]);
+        if (dec) add(now - dec[0] * M, 'ED_DECISION', { id: p.id, decision: dec[1], specialty: spec, unit: dec[2] }, STAFF[4]);
+      };
+      const e1 = P('P-42101', 'ENC-89101', 'Harper Demo', 'CTAS 3', 'Pneumonia, needs IV antibiotics', 'Aris Thorne', 'Team A');
+      onBed(e1, 330, 300, 'Acute Bed 05', 'Internal Medicine', [280, 'admit', 'Ward']);
+      add(now - 200 * M, 'UPDATE_DETAILS', { id: e1.id, changes: { physician: 'Elena Vance' }, note: 'Handed over at shift change' }, STAFF[4]);
+      onBed(P('P-42102', 'ENC-89102', 'Rowan Sample', 'CTAS 2', 'NSTEMI', 'Mark Roberts', 'Team A'), 260, 240, 'Resus Bay 2', 'Cardiology', [200, 'refer', 'CCU / HDU']);
+      onBed(P('P-42103', 'ENC-89103', 'Quinn Mock', 'CTAS 3', 'Renal colic, analgesia', 'Elena Vance', 'Team B'), 120, 90, 'Acute Bed 08', 'Urology', null);
+      onBed(P('P-42104', 'ENC-89104', 'Skyler Example', 'CTAS 3', 'Appendicitis', 'Aris Thorne', 'Team B'), 200, 180, 'Sub-Acute Bed 2', 'General Surgery', [60, 'refer', 'Ward']);
+      onBed(P('P-42105', 'ENC-89105', 'Dakota Testcase', 'CTAS 4', 'Wrist fracture for reduction', 'Mark Roberts', 'Team C'), 70, 40, 'Fast Track 2', 'Orthopaedics', null);
+      onBed(P('P-42106', 'ENC-89106', 'Emerson Training', 'CTAS 3', 'Bronchiolitis (child)', 'Elena Vance', 'Team C'), 420, 380, 'Paeds Bed 1', 'Paediatrics', [330, 'admit', 'Ward']);
+
       acts.sort((a, b) => a.t - b.t);
       let st = D.emptyState(), skipped = 0;
       acts.forEach(a => {
-        try { st = D.apply(st, { type: a.type, payload: a.payload }, { user: { name: a.who[0], role: a.who[1] }, device: 'Demo Station', now: a.t, settings }).state; }
+        // Synthetic history picks beds at random, so a bed may still be occupied when a demo patient is allocated it.
+        const payload = a.type === 'ALLOCATE_BED' ? Object.assign({ override: true }, a.payload) : a.payload;
+        try { st = D.apply(st, { type: a.type, payload }, { user: { name: a.who[0], role: a.who[1] }, device: 'Demo Station', now: a.t, settings }).state; }
         catch (e) { skipped++; }
       });
       // Overdue alerts the system would have logged.
       D.activePatients(st).forEach(p => { st = D.apply(st, { type: 'SYSTEM_OVERDUE', payload: { id: p.id } }, { user: { name: 'System', role: 'System' }, device: 'Demo Station', now, settings }).state; });
+      D.inEdPatients(st).forEach(p => { st = D.apply(st, { type: 'SYSTEM_BOARDING', payload: { id: p.id } }, { user: { name: 'System', role: 'System' }, device: 'Demo Station', now, settings }).state; });
       st.demo = true;
       return { state: st, skipped };
     },

@@ -68,7 +68,10 @@
     const dueSoon = vit.filter(p => D.vitalsTiming(p, s, t).state === 'dueSoon');
     const ctas1 = a.filter(p => p.ctas === 'CTAS 1');
     const noWf = a.filter(p => !D.activeWfs(p).length);
-    return { a, vit, bed, proc, overdue, dueSoon, ctas1, noWf };
+    // On ED beds, longest boarding first, then longest on the bed.
+    const ed = D.inEdPatients(S.state).sort((x, y) => ((D.boarding(y, s, t) || { mins: -1 }).mins - (D.boarding(x, s, t) || { mins: -1 }).mins) || D.edStay(y, t) - D.edStay(x, t));
+    const boarding = ed.filter(p => p.ed.decision), overstay = boarding.filter(p => D.boarding(p, s, t).overstay);
+    return { a, vit, bed, proc, overdue, dueSoon, ctas1, noWf, ed, boarding, overstay };
   };
 
   UI.vs = { };
@@ -77,7 +80,7 @@
   // ------------------------------------------------------------------ shell
   const NAV = [
     ['dashboard', 'Main Dashboard', 'grid'], ['vitals', 'Vitals Monitoring', 'heart'], ['bed', 'Awaiting ED Bed', 'bed'],
-    ['procedure', 'Awaiting Procedure', 'syringe'], ['patients', 'All Patients', 'users'], ['analytics', 'Admin & SPC Analytics', 'chart'],
+    ['procedure', 'Awaiting Procedure', 'syringe'], ['patients', 'All Patients', 'users'], ['edbeds', 'ED Beds & Boarding', 'bed'], ['analytics', 'Admin & SPC Analytics', 'chart'],
     ['audit', 'Event Audit Trail', 'clock'], ['settings', 'Settings', 'sliders'],
   ];
   // The detailed view (analytics, audit trail, exports) is for Charge Nurses, ED Leaders and Admins.
@@ -149,12 +152,13 @@
     if (S.error) items.push(`<div class="alert red">${ic('alert')}<b>${esc(S.error)}</b></div>`);
     if (L.ctas1.length) items.push(`<div class="alert red pulse">${ic('alert')}<b>CTAS 1 in waiting area (${L.ctas1.length}):</b> ${L.ctas1.map(p => `<button class="link" data-act="open" data-id="${esc(p.id)}">${esc(p.urn)}</button>`).join(', ')} — move to resuscitation / continuous observation now.</div>`);
     if (L.overdue.length) items.push(`<div class="alert red">${ic('bell')}<b>${L.overdue.length} overdue reassessment${L.overdue.length > 1 ? 's' : ''}:</b> ${L.overdue.slice(0, 8).map(p => `<button class="link" data-act="reassess" data-id="${esc(p.id)}">${esc(p.urn)} (${esc(D.vitalsTiming(p, st(), now()).overdueMin < 1 ? '<1m' : U.dur(D.vitalsTiming(p, st(), now()).overdueMin))})</button>`).join(', ')}${L.overdue.length > 8 ? ' …' : ''}${!S.device.sound ? ' <span class="pill amber">sound muted</span>' : ''}</div>`);
+    if (L.overstay.length) items.push(`<div class="alert red pulse">${ic('bed')}<b>${L.overstay.length} overstay boarding (over ${U.dur(st().boardingRedMin)} since admission / referral):</b> ${L.overstay.slice(0, 8).map(p => `<button class="link" data-act="open" data-id="${esc(p.id)}">${esc(p.ed.bed)} · ${esc(p.urn)} (${esc(U.dur(D.boarding(p, st(), now()).mins))})</button>`).join(', ')}${L.overstay.length > 8 ? ' …' : ''} — charge nurse to move to ward / ICU.</div>`);
     if (PE.audio && PE.audio.blocked && S.device.sound) items.push(`<div class="alert amber">${ic('belloff')}Audio alerts are blocked by the browser until you click anywhere on this page.</div>`);
     ab.innerHTML = items.join('');
 
     // sidebar
-    const badges = { dashboard: L.a.length, vitals: L.vit.length, bed: L.bed.length, procedure: L.proc.length, patients: L.a.length, audit: S.state.events.length };
-    const hot = { vitals: L.overdue.length > 0 };
+    const badges = { dashboard: L.a.length, vitals: L.vit.length, bed: L.bed.length, procedure: L.proc.length, patients: L.a.length, edbeds: L.ed.length, audit: S.state.events.length };
+    const hot = { vitals: L.overdue.length > 0, edbeds: L.overstay.length > 0 };
     $('#side').innerHTML = `<nav aria-label="Views"><div class="navh">Workflows &amp; Views</div>${NAV.filter(([k]) => canSee(k)).map(([k, label, icon]) => `
       <button class="nav ${UI.view === k ? 'active' : ''}" data-act="nav" data-id="${k}" aria-current="${UI.view === k ? 'page' : 'false'}">
         ${ic(icon)}<span>${label}</span>${badges[k] != null ? `<b class="nb ${hot[k] ? 'hot' : ''}">${badges[k]}</b>` : ''}</button>`).join('')}</nav>
@@ -162,6 +166,8 @@
         <div><span>Active patients</span><b>${L.a.length}</b></div>
         <div><span>Overdue</span><b class="${L.overdue.length ? 'tred' : ''}">${L.overdue.length}</b></div>
         <div><span>Need disposition</span><b class="${L.noWf.length ? 'tamber' : ''}">${L.noWf.length}</b></div>
+        <div><span>On ED beds</span><b>${L.ed.length}</b></div>
+        <div><span>Boarding overstay</span><b class="${L.overstay.length ? 'tred' : ''}">${L.overstay.length}</b></div>
         <div><span>Global Exit Rule</span><b class="tgreen">Armed (any workflow)</b></div>
         <div class="learn">${(window.PULSEED_SITE || {}).training
           ? `<a class="link" href="${esc(location.pathname)}">${ic('shield')}Back to live PulseED</a>`
@@ -169,12 +175,13 @@
           <a class="link" href="quick-guide.html" target="_blank" rel="noopener">${ic('clock')}Quick guide</a></div>
         <div class="ver">PulseED v${PE.VERSION}</div>
       </div>`;
-    document.title = (L.overdue.length || L.ctas1.length ? `(${L.overdue.length + L.ctas1.length}) ⚠ ` : '') + 'PulseED · ED Flow Station';
+    const alarms = L.overdue.length + L.ctas1.length + L.overstay.length;
+    document.title = (alarms ? `(${alarms}) ⚠ ` : '') + 'PulseED · ED Flow Station';
   };
 
   UI.renderDatalists = () => {
     const s = st();
-    const phys = U.uniq(active().map(p => p.physician).filter(x => x && x !== 'Unassigned'));
+    const phys = U.uniq((s.physicians || []).concat(active().concat(D.inEdPatients(S.state)).map(p => p.physician)).filter(x => x && x !== 'Unassigned'));
     const dl = (id, arr) => `<datalist id="${id}">${arr.map(x => `<option value="${esc(x)}">`).join('')}</datalist>`;
     $('#datalists').innerHTML = dl('dl-spec', s.specialties) + dl('dl-proc', s.procedures) + dl('dl-phys', phys) + dl('dl-names', U.ls.get('pulseed:v2:recentUsers') || []);
   };
@@ -240,6 +247,7 @@
       <div class="tw"><table><thead><tr><th>Measure</th><th>This shift so far</th><th>Previous shift (${esc(prev.label)})</th></tr></thead><tbody>
         ${row('Registered on the board', x => x.registered)}
         ${row('Left the waiting area', x => x.exited)}
+        ${row('Released from ED beds', x => `${x.released}${x.releasedOverstay ? ` <span class="tred">(${x.releasedOverstay} after an overstay)</span>` : ''}`)}
         ${row('LWBS / left against advice', x => `${x.lwbs} (${x.lwbsPct}%)`)}
         ${row(`Reassessments on time (target ≥ ${st().complianceTargetPct}%)`, x => pct(x.compliance))}
         ${row('Median time to bed allocation', x => mins(x.bedAlloc))}
@@ -289,7 +297,10 @@
         const longest = L.bed.length ? D.bedWait(L.bed[0], s, t) : null;
         const notReady = L.proc.filter(p => !D.procReadiness(p.workflows.procedure).ready);
         const since = t - 12 * 3600000;
-        const exited = Object.values(S.state.patients).filter(p => p.status === 'exited' && U.toMs(p.exit.time) >= since).sort((a, b) => U.toMs(b.exit.time) - U.toMs(a.exit.time));
+        // Waiting-area exits (including placements still on an ED bed) and releases from the ED, newest first.
+        const exited = Object.values(S.state.patients).filter(p => p.exit && U.toMs(D.leftAt(p)) >= since).sort((a, b) => U.toMs(D.leftAt(b)) - U.toMs(D.leftAt(a)));
+        const exitText = p => p.release ? `Released from ED: ${esc(p.release.label)} · ${esc(p.release.bed)} now empty` : p.status === 'inED' ? `On ED bed ${esc(p.ed.bed)}` : `${esc(p.exit.label)}${p.exit.bed ? ` · ${esc(p.exit.bed)}` : ''}`;
+        const beds = D.bedBoard(S.state, s, t);
         const card = (title, count, sub, icon, tone, view, extra = '') => `
           <button class="metric ${tone} ${extra}" data-act="nav" data-id="${view}">
             <div><p>${title}</p><h4>${count}</h4><small>${sub}</small></div><span class="mi">${ic(icon)}</span></button>`;
@@ -309,11 +320,12 @@
         return `
           <section class="hero">
             <div><h2>Emergency Department Reassessment &amp; Flow Station</h2>
-              <p>Simultaneous multi-workflow waiting-area tracking. Patients can be enrolled in 1, 2 or all 3 workflows independently. Any disposition — including physical ED bed placement — triggers the Global Exit Rule and closes every open workflow.</p></div>
+              <p>Simultaneous multi-workflow waiting-area tracking. Patients can be enrolled in 1, 2 or all 3 workflows independently. Any disposition triggers the Global Exit Rule and closes every waiting-area workflow; patients placed on an ED bed move to ED Beds &amp; Boarding until they are released.</p></div>
             <div class="row">
               <button class="btn sky" data-act="nav" data-id="vitals">${ic('heart')}Vitals (${L.vit.length})</button>
               <button class="btn amber" data-act="nav" data-id="bed">${ic('bed')}Beds (${L.bed.length})</button>
               <button class="btn blue" data-act="nav" data-id="procedure">${ic('syringe')}Procedures (${L.proc.length})</button>
+              <button class="btn ${L.overstay.length ? 'red' : 'ghost'}" data-act="nav" data-id="edbeds">${ic('bed')}ED Beds (${L.ed.length})</button>
             </div>
           </section>
           <section class="metrics">
@@ -327,6 +339,12 @@
             ${card('Longest Bed Wait', longest ? U.dur(longest.mins) : '—', longest ? `${esc(L.bed[0].urn)} · target &lt; ${s.bedWaitAmberMin}m` : 'No one waiting', 'clock', longest && longest.level !== 'ok' ? (longest.level === 'red' ? 'red' : 'amber') : 'grey', 'bed')}
             ${card('Due Soon', L.dueSoon.length, 'Within the due-soon window', 'clock', L.dueSoon.length ? 'amber' : 'grey', 'vitals')}
             ${card('Needs Disposition', L.noWf.length, L.noWf.length ? '<span class="tamber">No active workflow — record exit</span>' : 'All patients have a workflow', 'door', L.noWf.length ? 'amber' : 'grey', 'patients')}
+          </section>
+          <section class="metrics small">
+            ${card('Patients on ED Beds', L.ed.length, `${beds.occupied} of ${beds.listed} listed beds occupied`, 'bed', 'sky', 'edbeds')}
+            ${card('Empty ED Beds', beds.empty, beds.reserved ? `${beds.reserved} more reserved for waiting patients` : 'Ready for new patients', 'bed', beds.empty ? 'green' : 'amber', 'edbeds')}
+            ${card('Admitted / Referred (Boarding)', L.boarding.length, 'Waiting for ward / ICU on an ED bed', 'clock', L.boarding.length ? 'amber' : 'grey', 'edbeds')}
+            ${card(`Boarding Overstay (over ${U.dur(s.boardingRedMin)})`, L.overstay.length, L.overstay.length ? '<span class="tred">Charge nurse: escalate transfer</span>' : 'None', 'alert', L.overstay.length ? 'red' : 'grey', 'edbeds', L.overstay.length ? 'pulse-card-alert' : '')}
           </section>
           ${shiftPanel(t)}
           <section class="tri">
@@ -347,7 +365,7 @@
               </tbody></table></div></div>
             <div class="panel"><div class="ph"><h3>${ic('undo', 'tsky')}Recently exited — last 12 h (${exited.length})</h3></div>
               <div class="tw scroll"><table><thead><tr><th>URN</th><th>Exit</th><th>Time</th><th>By</th><th class="r"></th></tr></thead><tbody>
-              ${exited.slice(0, 30).map(p => `<tr><td>${urnLink(p)}</td><td>${esc(p.exit.label)}${p.exit.bed ? ` · ${esc(p.exit.bed)}` : ''}</td><td class="mono">${U.when(p.exit.time)}</td><td>${esc(p.exit.by)}</td><td class="r">${btn('reopen', p.id, 'Reopen', 'ghost', 'undo')}</td></tr>`).join('') || empty('No exits in the last 12 hours.', 5)}
+              ${exited.slice(0, 30).map(p => `<tr><td>${urnLink(p)}</td><td>${exitText(p)}</td><td class="mono">${U.when(D.leftAt(p))}</td><td>${esc((p.release || p.exit).by)}</td><td class="r">${btn('reopen', p.id, p.status === 'inED' ? 'Undo placement' : 'Reopen', 'ghost', 'undo')}</td></tr>`).join('') || empty('No exits in the last 12 hours.', 5)}
               </tbody></table></div></div>
           </section>`;
       },
@@ -419,6 +437,49 @@
             <td>${esc(p.physician)}<div class="hint">${esc(p.team)}</div></td><td class="mono">${U.when(p.createdAt)}</td><td class="mono">${U.dur(U.minsBetween(p.createdAt, t))}</td>
             <td class="nowrap">${D.WF_KEYS.map(k => chip(p, k)).join(' ')}</td><td class="r nowrap">${btn('open', p.id, 'Open', 'ghost', 'edit')} ${btn('exit', p.id, 'Exit', 'green', 'door')}</td></tr>`).join('') || empty('No active patients.', 10)}
           </tbody></table></div></div>`;
+      },
+    },
+
+    edbeds: {
+      head: () => head('ED Beds &amp; Boarding', `Every ED bed in every area, live: empty, reserved for a waiting patient, or occupied. After the admission / referral decision the boarding clock runs; over ${U.dur(st().boardingRedMin)} the bed turns red as an overstay so the charge nurse can move the patient to the ward or ICU. Releasing the patient empties the bed.`,
+        searchBox('eq2', 'Search bed, URN, name, physician…') + selectF('earea', 'Area filter', [['', 'All areas'], ...D.bedBoard(S.state, st(), now()).areas.map(a => [a, a])])),
+      body() {
+        const s = st(), t = now(), L = UI.lists(), B = D.bedBoard(S.state, s, t);
+        const q = U.key(UI.vs.eq2), area = UI.vs.earea || '';
+        const hit = b => (!area || b.area === area) && (!q || U.key(b.bed).includes(q) || (b.p && matches(b.p, UI.vs.eq2)));
+        const tile = b => {
+          if (b.state === 'empty') return `<div class="btile empty"><b>${esc(b.bed)}</b><span class="pill green">Empty</span></div>`;
+          if (b.state === 'reserved') return `<button class="btile reserved" data-act="open" data-id="${esc(b.p.id)}"><b>${esc(b.bed)}</b><span class="pill amber">Reserved</span><small>for ${esc(b.p.urn)} (waiting area)</small></button>`;
+          const p = b.p, d = p.ed.decision, bo = b.boarding;
+          return `<button class="btile occ ${bo ? 'w-' + bo.level : ''} ${bo && bo.overstay ? 'pulse-card-alert' : ''}" data-act="open" data-id="${esc(p.id)}">
+            <b>${esc(b.bed)}</b>${bo ? pill(bo.overstay ? `OVERSTAY ${U.dur(bo.mins)}` : `Boarding ${U.dur(bo.mins)}`, bo.level === 'ok' ? 'sky' : bo.level) : pill('Occupied', 'sky')}
+            <span class="mono">${esc(p.urn)}</span><span>${nm(p)}</span><small>${esc(p.physician)} · on bed ${U.dur(D.edStay(p, t))}</small>
+            ${d ? `<small>${esc(D.DECISIONS[d.type])}: ${esc(d.specialty)}${d.unit ? ' · ' + esc(d.unit) : ''}</small>` : '<small class="tamber">No admission / referral decision yet</small>'}</button>`;
+        };
+        const groups = B.areas.filter(a => !area || a === area).map(a => {
+          const list = B.beds.filter(b => b.area === a);
+          const shown = list.filter(hit);
+          if (!shown.length) return '';
+          const occ = list.filter(b => b.state === 'occupied').length, emp = list.filter(b => b.state === 'empty').length;
+          return `<section class="panel"><div class="ph"><h3>${ic('bed', 'tsky')}${esc(a)}</h3><span class="hint">${occ} occupied · ${emp} empty · ${list.length} beds</span></div><div class="bgrid">${shown.map(tile).join('')}</div></section>`;
+        }).join('');
+        const rows = L.ed.filter(p => (!area || p.ed.area === area) && (!q || U.key(p.ed.bed).includes(q) || matches(p, UI.vs.eq2))).map(p => {
+          const bo = D.boarding(p, s, t), d = p.ed.decision;
+          return `<tr class="${bo && bo.overstay ? 'row-red' : bo && bo.level === 'amber' ? 'row-amber' : ''}"><td class="b">${esc(p.ed.bed)}</td><td>${urnLink(p)}</td><td class="b">${nm(p)}</td><td>${esc(p.physician)}<div class="hint">${esc(p.team)}</div></td>
+            <td class="mono">${U.when(p.ed.placedAt)}<div class="hint">${U.dur(D.edStay(p, t))} on bed</div></td>
+            <td>${d ? `${esc(D.DECISIONS[d.type])}: <b>${esc(d.specialty)}</b>${d.unit ? ' · ' + esc(d.unit) : ''}<div class="hint">${U.when(d.time)}</div>` : '<span class="tamber">None yet</span>'}</td>
+            <td>${bo ? waitB({ mins: bo.mins, level: bo.level }) + (bo.overstay ? ' <span class="pill red">OVERSTAY</span>' : '') : '—'}</td>
+            <td class="r nowrap">${btn('eddecision', p.id, d ? 'Change decision' : 'Admit / refer', 'ghost', 'edit')} ${btn('edmove', p.id, 'Move', 'ghost')} ${btn('edrelease', p.id, 'Release', 'green', 'door')}</td></tr>`;
+        }).join('') || empty(q || area ? 'No patients match the filters.' : 'No patients on ED beds.', 8);
+        return `<section class="metrics small">
+            <div class="metric sky"><div><p>On ED beds</p><h4>${L.ed.length}</h4><small>${B.occupied} of ${B.listed} listed beds occupied</small></div><span class="mi">${ic('bed')}</span></div>
+            <div class="metric ${B.empty ? 'green' : 'amber'}"><div><p>Empty beds</p><h4>${B.empty}</h4><small>${B.reserved} reserved for waiting patients</small></div><span class="mi">${ic('bed')}</span></div>
+            <div class="metric ${L.boarding.length ? 'amber' : 'grey'}"><div><p>Admitted / referred (boarding)</p><h4>${L.boarding.length}</h4><small>Amber from ${U.dur(s.boardingAmberMin)}</small></div><span class="mi">${ic('clock')}</span></div>
+            <div class="metric ${L.overstay.length ? 'red pulse-card-alert' : 'grey'}"><div><p>Overstay (over ${U.dur(s.boardingRedMin)})</p><h4>${L.overstay.length}</h4><small>${L.overstay.length ? 'Move to ward / ICU' : 'None'}</small></div><span class="mi">${ic('alert')}</span></div>
+          </section>
+          <div class="panel flush"><div class="tw"><table class="big"><thead><tr><th>Bed</th><th>URN</th><th>Name</th><th>Physician / Team</th><th>Placed</th><th>Decision</th><th>Boarding</th><th class="r">Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+          ${B.offList.length ? `<p class="note">${ic('alert')} On a bed that is not in the Settings bed list: ${B.offList.map(p => `<button class="link" data-act="open" data-id="${esc(p.id)}">${esc(p.ed.bed)} · ${esc(p.urn)}</button>`).join(', ')}. Add the bed in Settings so it shows on the board.</p>` : ''}
+          ${groups || '<p class="hint pad">No beds match the filters.</p>'}`;
       },
     },
 
@@ -700,11 +761,97 @@
   // ------------------------------------------------------------------ modals: bed
   const bedOptions = selfId => {
     const taken = {};
-    active().forEach(x => { const b = x.workflows.bed; if (x.id !== selfId && b.active && b.bedAllocated) taken[U.key(b.allocatedBed)] = x.urn; });
-    return { taken, html: `<datalist id="dl-bedsel">${st().beds.map(b => `<option value="${esc(b)}">${taken[U.key(b)] ? 'allocated to ' + esc(taken[U.key(b)]) : 'free'}</option>`).join('')}</datalist>` };
+    st().beds.forEach(b => { const h = D.bedHolder(S.state, b, selfId); if (h) taken[U.key(b)] = (h.occupied ? 'occupied by ' : 'allocated to ') + h.urn; });
+    return { taken, html: `<datalist id="dl-bedsel">${st().beds.map(b => `<option value="${esc(b)}">${taken[U.key(b)] ? esc(taken[U.key(b)]) : 'empty'}</option>`).join('')}</datalist>` };
   };
   const overrideRow = `<label class="check override" hidden><input type="checkbox" name="override"> I confirm this bed should be given to this patient (override the existing allocation)</label>`;
   const revealOverride = (ex, form) => { if (ex.code === 'BED_TAKEN') $('.override', form).hidden = false; };
+
+  // ------------------------------------------------------------------ modals: patient on an ED bed
+  const edCard = (p, t) => {
+    const bo = D.boarding(p, st(), t), d = p.ed.decision;
+    return `<div class="kv"><span>ED bed</span><b>${esc(p.ed.bed)} <span class="hint">${esc(p.ed.area)}</span></b><span>Placed</span><b>${U.full(p.ed.placedAt)} · ${U.dur(D.edStay(p, t))} on bed</b>
+      <span>Decision</span><b>${d ? `${esc(D.DECISIONS[d.type])}: ${esc(d.specialty)}${d.unit ? ' · ' + esc(d.unit) : ''} <span class="hint">at ${U.when(d.time)} by ${esc(d.by)}</span>` : '<span class="tamber">None yet</span>'}</b>
+      <span>Boarding</span><b>${bo ? waitB({ mins: bo.mins, level: bo.level }) + (bo.overstay ? ` <span class="pill red">OVERSTAY (over ${U.dur(st().boardingRedMin)})</span>` : '') : 'Starts with the admission / referral decision'}</b></div>`;
+  };
+
+  UI.edModal = id => {
+    const p = fresh(id); if (!p || p.status !== 'inED') return UI.patientModal(id);
+    const t = now();
+    const evs = S.state.events.filter(e => e.patientId === id).slice().reverse();
+    UI.modal({
+      title: `On ED Bed ${esc(p.ed.bed)} — ${esc(p.urn)}`, icon: 'bed', wide: true, submit: 'Save Physician &amp; Details',
+      extraButtons: `<button type="button" class="btn ghost" data-do="decision">${ic('edit')}${p.ed.decision ? 'Change decision' : 'Admit / refer'}</button>
+        <button type="button" class="btn ghost" data-do="move">Move bed</button>
+        <button type="button" class="btn green" data-do="release">${ic('door')}Release from ED</button>`,
+      body: `${patientCard(p)}${edCard(p, t)}
+        <div class="g3">
+          ${field('Treating Physician', inp('physician', p.physician === 'Unassigned' ? '' : p.physician, 'list="dl-phys" maxlength="60" placeholder="Unassigned"'), 'Pick from the list or type a new name; every change is in the audit trail.')}
+          ${field('ED Team', inp('team', p.team, 'maxlength="40" required'))}
+          ${field('Diagnosis', inp('diagnosis', p.diagnosis, 'maxlength="120" required'))}
+          ${field('Change note', inp('note', '', 'maxlength="200" placeholder="Optional, e.g. handed over to Dr X"'), '', 'span2')}
+        </div>
+        <div class="row"><button type="button" class="btn ghost sm" data-do="undo">${ic('undo')}Undo placement (back to waiting area)</button></div>
+        <h4 class="sh">Timeline (${evs.length})</h4>
+        <div class="timeline">${evs.map(e => `<div class="tl"><span class="mono">${esc(U.full(e.ts))}</span><b>${esc(e.eventType)}</b><span>${esc(e.prev)}${e.prev || e.next ? ' → ' : ''}${esc(e.next)}</span><small>${esc(e.user)} · ${esc(e.notes)}</small></div>`).join('')}</div>`,
+      onMount: (el, form, m) => el.addEventListener('click', e => {
+        const go = e.target.closest('[data-do]'); if (!go) return;
+        m.close(); ({ decision: UI.edDecisionModal, move: UI.edMoveModal, release: UI.edReleaseModal, undo: UI.reopenModal })[go.dataset.do](id);
+      }),
+      onSubmit: async (f, d) => {
+        await run('UPDATE_DETAILS', { id, expectedVersion: p.version, note: d.note, changes: { physician: d.physician, team: d.team, diagnosis: d.diagnosis } }, `Details updated for ${p.urn} on ${p.ed.bed}.`);
+      },
+    });
+  };
+
+  UI.edDecisionModal = id => {
+    const p = fresh(id); if (!p || p.status !== 'inED') return;
+    const d = p.ed.decision;
+    UI.modal({
+      title: `${d ? 'Change' : 'Record'} Admission / Referral — ${esc(p.ed.bed)} (${esc(p.urn)})`, icon: 'edit', submit: d ? 'Save decision' : 'Record decision &amp; start boarding clock',
+      extraButtons: d ? `<button type="button" class="btn ghost" data-cancel>Cancel decision</button>` : '',
+      body: `${patientCard(p)}${edCard(p, now())}
+        <div class="g3">
+          ${field('Decision *', sel('decision', Object.entries(D.DECISIONS), d ? d.type : 'admit'))}
+          ${field('Admitting / receiving specialty *', inp('specialty', d ? d.specialty : (p.workflows.bed.intendedSpecialty || ''), 'required list="dl-spec" maxlength="60" autofocus'))}
+          ${field('Going to', sel('unit', [['', '— not decided yet —'], ...D.UNITS.map(u => [u, u])], d ? d.unit : ''))}
+        </div>
+        ${field('Note (optional)', inp('note', '', 'maxlength="200" placeholder="e.g. accepted by on-call registrar, bed requested"'))}
+        <p class="hint">${d ? `The boarding clock keeps running from ${U.full(d.time)}; changing the specialty or unit does not restart it.` : `The boarding clock starts now. After ${U.dur(st().boardingAmberMin)} the bed turns amber; after ${U.dur(st().boardingRedMin)} it shows as an overstay alarm.`}</p>`,
+      onMount: (el, form, m) => { const c = $('[data-cancel]', el); if (c) c.onclick = () => { m.close(); UI.reasonModal(`Cancel decision (${esc(p.urn)})`, 'Why is the decision cancelled? (e.g. referral declined)', reason => run('ED_CANCEL_DECISION', { id, reason, expectedVersion: p.version }, `Decision cancelled for ${p.urn}; boarding clock stopped.`)); }; },
+      onSubmit: async (f, x) => { await run('ED_DECISION', { id, decision: x.decision, specialty: x.specialty, unit: x.unit, note: x.note, expectedVersion: p.version }, `${p.urn}: ${D.DECISIONS[x.decision]} — ${U.norm(x.specialty)}.${d ? '' : ' Boarding clock started.'}`); },
+    });
+  };
+
+  UI.edMoveModal = id => {
+    const p = fresh(id); if (!p || p.status !== 'inED') return;
+    const bo = bedOptions(id);
+    UI.modal({
+      title: `Move ${esc(p.urn)} from ${esc(p.ed.bed)}`, icon: 'bed', submit: 'Move patient',
+      body: `${patientCard(p)}${bo.html}
+        ${field('New ED bed *', inp('bed', '', 'required list="dl-bedsel" maxlength="40" autocomplete="off" placeholder="Start typing to pick an empty bed" autofocus'), `${esc(p.ed.bed)} becomes empty. Suggestions show which beds are occupied.`)}
+        ${field('Note (optional)', inp('note', '', 'maxlength="200"'))}${overrideRow}`,
+      onError: revealOverride,
+      onSubmit: async (f, d) => { await run('ED_MOVE', { id, bed: d.bed, note: d.note, override: d.override, expectedVersion: p.version }, `${p.urn} moved to ${U.norm(d.bed)}; ${p.ed.bed} is now empty.`); },
+    });
+  };
+
+  UI.edReleaseModal = id => {
+    const p = fresh(id); if (!p || p.status !== 'inED') return;
+    const d = p.ed.decision;
+    const def = !d ? 'home' : d.unit === 'ICU' ? 'icu' : d.unit === 'CCU / HDU' ? 'ccu' : d.unit === 'Operating theatre' ? 'theatre' : 'ward';
+    UI.modal({
+      title: `Release from ED — ${esc(p.ed.bed)} (${esc(p.urn)})`, icon: 'door', tone: 'danger', danger: true, submit: 'Release &amp; empty the bed',
+      body: `${patientCard(p)}${edCard(p, now())}
+        ${field('Where did the patient go? *', sel('type', Object.entries(D.RELEASE_TYPES), def))}
+        ${field('Release note *', `<textarea name="note" rows="3" maxlength="500" required placeholder="e.g. Accepted by Medicine, moved to Ward 5 bed 12, handover given to ward nurse"></textarea>`)}
+        <div class="warnbox">${ic('shield')}<div><b>Releasing closes this patient's ED record</b><p>${esc(p.ed.bed)} becomes empty for the next patient straight away, and the patient leaves every ED list. This can be undone from "Recently exited" if done in error.</p></div></div>`,
+      onSubmit: async (f, x) => {
+        await run('ED_RELEASE', { id, type: x.type, note: x.note, expectedVersion: p.version }, `${p.urn} released (${D.RELEASE_TYPES[x.type]}); ${p.ed.bed} is now empty.`,
+          { label: 'Undo', fn: () => run('REOPEN', { id, reason: 'Undo immediately after release' }, `${p.urn} is back on ${p.ed.bed}.`).catch(e => UI.toast(e.message, 'error')) });
+      },
+    });
+  };
 
   UI.bedModal = id => {
     const p = fresh(id); if (!p) return;
@@ -757,13 +904,13 @@
         ${field('How did the patient leave the waiting area?', sel('type', Object.entries(D.EXIT_TYPES), def))}
         <div data-placed>${field('Assigned ED Bed Location *', inp('bed', b.bedAllocated ? b.allocatedBed : '', 'list="dl-bedsel" maxlength="40" autocomplete="off" placeholder="Bed the patient is physically in"'))}</div>
         ${field('Note / reason', `<textarea name="reason" rows="2" maxlength="300" placeholder="Required for AMA, transfer, deceased and entered-in-error"></textarea>`)}
-        <div class="warnbox">${ic('shield')}<div><b>Mandatory Scope Exit Confirmation</b><p>Confirming will <b>immediately close all active episodes</b> for this patient across every workflow and remove them from the waiting-area lists. Unfinished procedures are closed <b>without being marked Done</b>. This can be reversed from “Recently exited” if done in error.</p></div></div>
+        <div class="warnbox">${ic('shield')}<div><b>Mandatory Scope Exit Confirmation</b><p>Confirming will <b>immediately close all active episodes</b> for this patient across every workflow and remove them from the waiting-area lists. Unfinished procedures are closed <b>without being marked Done</b>. A patient placed on an ED bed moves to <b>ED Beds &amp; Boarding</b> and keeps that bed until released. This can be reversed from “Recently exited” if done in error.</p></div></div>
         ${overrideRow}`,
       onMount: (el, form) => { const sync = () => ($('[data-placed]', form).hidden = form.elements.type.value !== 'placed'); form.elements.type.onchange = sync; sync(); },
       onError: revealOverride,
       onSubmit: async (f, d) => {
         await run('EXIT', { id, type: d.type, bed: d.bed, reason: d.reason, override: d.override, expectedVersion: p.version },
-          d.type === 'placed' ? `Global Exit for ${p.urn}: placed in ${U.norm(d.bed) || b.allocatedBed}; all workflows closed.` : `${p.urn} exited: ${D.EXIT_TYPES[d.type]}.`,
+          d.type === 'placed' ? `${p.urn} placed on ${U.norm(d.bed) || b.allocatedBed}; waiting-area workflows closed. Now on ED Beds & Boarding.` : `${p.urn} exited: ${D.EXIT_TYPES[d.type]}.`,
           { label: 'Undo', fn: () => run('REOPEN', { id, reason: 'Undo immediately after exit' }, `${p.urn} restored to the waiting area.`).catch(e => UI.toast(e.message, 'error')) });
       },
     });
@@ -771,7 +918,9 @@
 
   UI.reopenModal = id => {
     const p = fresh(id); if (!p || !p.exit) return;
-    UI.reasonModal(`Reopen ${esc(p.urn)} (${esc(p.exit.label)})`, 'Why is this exit being reversed?',
+    if (p.release) return UI.reasonModal(`Reverse release of ${esc(p.urn)} (${esc(p.release.label)})`, `Why is this release being reversed? The patient goes back onto ${esc(p.release.bed)}.`,
+      reason => run('REOPEN', { id, reason }, `${p.urn} is back on ${p.release.bed}.`));
+    UI.reasonModal(`${p.status === 'inED' ? 'Undo bed placement' : 'Reopen'} ${esc(p.urn)} (${esc(p.exit.label)})`, p.status === 'inED' ? `Why is the placement on ${esc(p.ed.bed)} being reversed? The bed becomes empty and the patient returns to the waiting area.` : 'Why is this exit being reversed?',
       reason => run('REOPEN', { id, reason }, `${p.urn} restored to the waiting area with its previous workflows.`));
   };
 
@@ -784,6 +933,7 @@
   // ------------------------------------------------------------------ modals: patient record
   UI.patientModal = id => {
     const p = fresh(id); if (!p) return UI.toast('Patient record no longer exists.', 'warn');
+    if (p.status === 'inED') return UI.edModal(id);
     const s = st(), t = now(), act = p.status === 'active';
     const evs = S.state.events.filter(e => e.patientId === id).slice().reverse();
     const wfCard = k => {
@@ -800,7 +950,8 @@
     UI.modal({
       title: `Patient Record — ${esc(p.urn)}${act ? '' : ' (exited)'}`, icon: 'users', wide: true, submit: 'Save Details',
       extraButtons: act ? `<button type="button" class="btn green" data-do="exit">${ic('door')}Record exit / Global Exit</button>` : `<button type="button" class="btn ghost" data-do="reopen">${ic('undo')}Reopen</button>`,
-      body: `${act ? '' : `<div class="note">${ic('door')} Exited ${U.full(p.exit.time)} — ${esc(p.exit.label)}${p.exit.bed ? ' · ' + esc(p.exit.bed) : ''} by ${esc(p.exit.by)}${p.exit.reason ? ' · ' + esc(p.exit.reason) : ''}</div>`}
+      body: `${act ? '' : `<div class="note">${ic('door')} Left the waiting area ${U.full(p.exit.time)} — ${esc(p.exit.label)}${p.exit.bed ? ' · ' + esc(p.exit.bed) : ''} by ${esc(p.exit.by)}${p.exit.reason ? ' · ' + esc(p.exit.reason) : ''}</div>`}
+        ${p.release ? `<div class="note">${ic('bed')} Released from ED ${U.full(p.release.time)} — ${esc(p.release.label)} from ${esc(p.release.bed)} by ${esc(p.release.by)}. Release note: ${esc(p.release.note)}</div>` : ''}
         <fieldset ${act ? '' : 'disabled'}><div class="g3">
           ${field('Name', inp('name', p.name, 'maxlength="80" required'))}
           ${field('CTAS (re-triage)', sel('ctas', D.CTAS, p.ctas))}
@@ -1049,8 +1200,10 @@
         ${num('procWaitAmberMin', s.procWaitAmberMin, 1, 1440, 'Procedure wait amber (min)')}${num('procWaitRedMin', s.procWaitRedMin, 1, 1440, 'Procedure wait red (min)')}
         ${num('chimeRepeatMin', s.chimeRepeatMin, 1, 30, 'Repeat overdue chime every (min)')}${num('autoLockMin', s.autoLockMin, 0, 240, 'Auto-lock after inactivity (min)', '0 = never (not recommended)')}
         ${num('exitedRetentionHours', s.exitedRetentionHours, 24, 2160, 'Keep exited patients (h)')}${num('eventRetentionHours', s.eventRetentionHours, 24, 8760, 'Keep audit events on this PC (h)')}
+        ${num('boardingAmberMin', s.boardingAmberMin, 15, 1440, 'Boarding amber after (min)', 'From the admission / referral decision')}${num('boardingRedMin', s.boardingRedMin, 30, 2880, 'Boarding overstay alarm after (min)', '240 = 4 hours')}
       </div></section>
-      <section class="panel"><h3>Lists</h3><p class="hint">One entry per line.</p><div class="g4">
+      <section class="panel"><h3>Lists</h3><p class="hint">One entry per line. ED beds: name each bed with its area first (e.g. "Acute Bed 07", "Resus Bay 2", "Paeds Bed 1") and the ED Beds board groups them by area.</p><div class="g4">
+        ${field('Physicians', `<textarea name="physicians" rows="6" placeholder="One name per line">${esc((s.physicians || []).join('\n'))}</textarea>`, 'Offered when assigning or changing a physician. Any other name can still be typed.')}
         ${field('ED teams', `<textarea name="teams" rows="6">${esc(s.teams.join('\n'))}</textarea>`)}
         ${field('Specialties', `<textarea name="specialties" rows="6">${esc(s.specialties.join('\n'))}</textarea>`)}
         ${field('Procedures / imaging', `<textarea name="procedures" rows="6">${esc(s.procedures.join('\n'))}</textarea>`)}
@@ -1090,7 +1243,9 @@
         next.siteName = U.norm(d.siteName) || 'Emergency Department';
         next.stationName = U.norm(d.stationName) || 'Waiting Area Station';
         ['2', '3', '4', '5'].forEach(c => { const v = n('iv_' + c); if (v < 1 || v > 480) throw new D.RuleError(`CTAS ${c} interval must be 1–480 min.`); next.ctasIntervals['CTAS ' + c] = v; });
-        ['dueSoonMaxMin', 'backdateMaxMin', 'complianceTargetPct', 'bedWaitAmberMin', 'bedWaitRedMin', 'procWaitAmberMin', 'procWaitRedMin', 'chimeRepeatMin', 'autoLockMin', 'exitedRetentionHours', 'eventRetentionHours'].forEach(k => (next[k] = n(k)));
+        ['dueSoonMaxMin', 'backdateMaxMin', 'complianceTargetPct', 'bedWaitAmberMin', 'bedWaitRedMin', 'procWaitAmberMin', 'procWaitRedMin', 'chimeRepeatMin', 'autoLockMin', 'exitedRetentionHours', 'eventRetentionHours', 'boardingAmberMin', 'boardingRedMin'].forEach(k => (next[k] = n(k)));
+        if (next.boardingAmberMin >= next.boardingRedMin) throw new D.RuleError('Boarding amber must come before the overstay alarm.');
+        next.physicians = U.uniq(U.lines(d.physicians));
         next.dueSoonFraction = n('dueSoonPct') / 100;
         if (next.bedWaitAmberMin >= next.bedWaitRedMin || next.procWaitAmberMin >= next.procWaitRedMin) throw new D.RuleError('Amber thresholds must be lower than red thresholds.');
         ['teams', 'specialties', 'procedures', 'beds'].forEach(k => { const l = U.uniq(U.lines(d[k])); if (!l.length) throw new D.RuleError(`The ${k} list cannot be empty.`); next[k] = l; });
@@ -1111,7 +1266,11 @@
     const f = U.full;
     const eps = key => { const out = []; all.forEach(p => { (p.pastEpisodes || []).filter(e => e.wf === key).forEach(e => out.push([p, e])); const w = p.workflows[key]; if (w && (w.startTime || w.addedTime || w.requestTime)) out.push([p, w]); }); return out; };
     let name, csv;
-    if (kind === 'x-master') { name = 'Patient_Master'; csv = U.csv(['URN', 'EncounterID', 'Name', 'CTAS', 'Diagnosis', 'Physician', 'Team', 'Status', 'RegisteredAt', 'RegisteredBy', 'ExitType', 'ExitTime', 'ExitBed', 'ExitBy', 'ExitNote'], all.map(p => [p.urn, p.encounterId, dn(p, deid), p.ctas, p.diagnosis, p.physician, p.team, p.status, f(p.createdAt), p.createdBy, p.exit ? p.exit.label : '', p.exit ? f(p.exit.time) : '', p.exit ? p.exit.bed : '', p.exit ? p.exit.by : '', p.exit ? p.exit.reason : ''])); }
+    if (kind === 'x-master') { name = 'Patient_Master'; csv = U.csv(['URN', 'EncounterID', 'Name', 'CTAS', 'Diagnosis', 'Physician', 'Team', 'Status', 'RegisteredAt', 'RegisteredBy', 'ExitType', 'ExitTime', 'ExitBed', 'ExitBy', 'ExitNote', 'EDBed', 'Decision', 'DecisionSpecialty', 'DecisionUnit', 'DecisionTime', 'BoardingMins', 'ReleasedTo', 'ReleaseTime', 'ReleasedBy', 'ReleaseNote', 'MinsOnEDBed'],
+      all.map(p => { const e = p.ed, d = e && e.decision, r = p.release, bo = p.status === 'inED' ? D.boarding(p, st(), now()) : null;
+        return [p.urn, p.encounterId, dn(p, deid), p.ctas, p.diagnosis, p.physician, p.team, p.status === 'inED' ? 'on ED bed' : p.status, f(p.createdAt), p.createdBy, p.exit ? p.exit.label : '', p.exit ? f(p.exit.time) : '', p.exit ? p.exit.bed : '', p.exit ? p.exit.by : '', p.exit ? p.exit.reason : '',
+          e ? e.bed : '', d ? D.DECISIONS[d.type] : '', d ? d.specialty : '', d ? d.unit : '', d ? f(d.time) : '', r ? (r.boardingMin == null ? '' : r.boardingMin) : bo ? bo.mins : '',
+          r ? r.label : '', r ? f(r.time) : '', r ? r.by : '', r ? r.note : '', r ? r.edStayMin : e ? D.edStay(p, now()) : '']; })); }
     if (kind === 'x-vitals') { name = 'Vitals_Episodes'; csv = U.csv(['URN', 'EncounterID', 'Name', 'CTAS', 'StartTime', 'LastReassessment', 'ReassessmentCount', 'ReassessmentTimes', 'Active', 'EndTime', 'EndReason'], eps('vitals').map(([p, v]) => [p.urn, p.encounterId, dn(p, deid), v.ctas || p.ctas, f(v.startTime), f(v.lastReassessment), (v.reassessments || []).length, (v.reassessments || []).map(U.t24).join(' '), v.active, f(v.endTime), v.endReason])); }
     if (kind === 'x-bed') { name = 'Bed_Episodes'; csv = U.csv(['URN', 'EncounterID', 'Name', 'Diagnosis', 'IntendedSpecialty', 'BedAllocated', 'AllocatedBed', 'AddedTime', 'FirstAllocationTime', 'AllocationTime', 'PlacementTime', 'PhysicallyPlaced', 'MinsToAllocation', 'MinsToPlacement', 'Active', 'EndReason'], eps('bed').map(([p, b]) => [p.urn, p.encounterId, dn(p, deid), p.diagnosis, b.intendedSpecialty, b.bedAllocated, b.allocatedBed, f(b.addedTime), f(b.firstAllocationTime), f(b.allocationTime), f(b.placementTime), b.physicallyPlaced, b.firstAllocationTime ? U.minsBetween(b.addedTime, b.firstAllocationTime) : '', b.placementTime ? U.minsBetween(b.addedTime, b.placementTime) : '', b.active, b.endReason])); }
     if (kind === 'x-proc') { name = 'Procedure_Episodes'; csv = U.csv(['URN', 'EncounterID', 'Name', 'PlannedProcedure', 'Consent', 'Arranged', 'Status', 'RequestTime', 'CompletionTime', 'TurnaroundMins', 'Active', 'EndReason'], eps('procedure').map(([p, r]) => [p.urn, p.encounterId, dn(p, deid), r.plannedProcedure, r.consent, r.arranged, r.status, f(r.requestTime), f(r.completionTime), r.completionTime ? U.minsBetween(r.requestTime, r.completionTime) : '', r.active, r.endReason])); }
@@ -1137,6 +1296,9 @@
     proc: needUser(UI.procModal),
     exit: needUser(id => UI.exitModal(id)),
     reopen: needUser(UI.reopenModal),
+    eddecision: needUser(UI.edDecisionModal),
+    edmove: needUser(UI.edMoveModal),
+    edrelease: needUser(UI.edReleaseModal),
     new: needUser(UI.newPatientModal),
     handoff: needUser(UI.handoffModal),
     shiftpdf: needUser(id => UI.shiftPdf(id)),

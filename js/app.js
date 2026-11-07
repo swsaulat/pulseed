@@ -38,13 +38,15 @@
   function alerts() {
     if (!S.user && S.device.mode) { /* keep evaluating so the chime still sounds on a locked screen */ }
     const L = UI.lists();
-    const ids = new Set(L.overdue.map(p => p.id).concat(L.ctas1.map(p => 'c1' + p.id)));
+    // A new boarding overstay chimes once; overdue reassessments and CTAS 1 keep repeating until handled.
+    const repeat = L.overdue.map(p => p.id).concat(L.ctas1.map(p => 'c1' + p.id));
+    const ids = new Set(repeat.concat(L.overstay.map(p => 'bo' + p.id)));
     const fresh = [...ids].some(id => !known.has(id));
     known = ids;
     const t = Date.now();
     if (S.device.sound && ids.size) {
       const shared = U.ls.get('pulseed:v2:lastChime', 0); // de-duplicate between tabs on this PC
-      const due = t - Math.max(lastChime, shared) >= S.settings.chimeRepeatMin * 60000;
+      const due = repeat.length && t - Math.max(lastChime, shared) >= S.settings.chimeRepeatMin * 60000;
       if ((fresh && t - shared > 5000) || due) {
         if (PE.audio.chime(L.ctas1.length ? 'critical' : 'overdue')) { lastChime = t; try { U.ls.set('pulseed:v2:lastChime', t); } catch (e) { /* ignore */ } }
       }
@@ -54,6 +56,9 @@
         const tm = D.vitalsTiming(p, S.settings, t);
         if (!S.state.events.some(e => e.id === `ovd-${p.id}-${tm.due}`)) S.dispatchSystem('SYSTEM_OVERDUE', { id: p.id });
       });
+    }
+    if (leader && L.overstay.length && !S.isShared()) {
+      L.overstay.forEach(p => { if (!S.state.events.some(e => e.id === `brd-${p.id}-${U.toMs(p.ed.decision.time)}`)) S.dispatchSystem('SYSTEM_BOARDING', { id: p.id }); });
     }
   }
   S.dispatchSystem = async (type, payload) => {
