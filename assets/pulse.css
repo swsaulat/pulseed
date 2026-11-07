@@ -140,6 +140,7 @@ code { font-family: var(--mono); font-size: .9em; background: var(--panel2); pad
 .metric.sky { border-left-color: var(--sky); } .metric.amber { border-left-color: var(--amber); } .metric.blue { border-left-color: var(--blue); }
 .metric.red { border-left-color: var(--red); } .metric.red h4 { color: var(--red); } .metric.red .mi { background: var(--red-bg); color: var(--red); }
 .metric.amber .mi { color: var(--amber); } .metric.sky .mi { color: var(--sky); } .metric.blue .mi { color: var(--blue); }
+.metric.green { border-left-color: var(--green); } .metric.green .mi { color: var(--green); }
 .tri { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .duo { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; box-shadow: var(--shadow); min-width: 0; }
@@ -310,6 +311,16 @@ textarea.sbar { width: 100%; font: 12px/1.5 var(--mono); background: var(--panel
   .tl { grid-template-columns: 1fr; } .tl small, .tl > span:nth-child(3) { grid-column: 1; }
 }
 @media print { .top, #side, #alertBar, #toasts, .modebar { display: none; } #main { overflow: visible; } }
+
+/* ED Beds & Boarding board */
+.bgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.btile { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; border: 1px solid var(--line2); border-radius: 12px; padding: 10px 12px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; min-height: 92px; }
+button.btile { cursor: pointer; } button.btile:hover { border-color: #0284c7; }
+.btile b { font-size: 14px; } .btile small { color: var(--muted); font-size: 12px; }
+.btile.empty { background: #ecfdf5; border-color: #a7f3d0; } .btile.reserved { background: #fffbeb; border-color: #fcd34d; }
+.btile.occ { background: #f0f9ff; border-color: #bae6fd; } .btile.occ.w-amber { background: #fffbeb; border-color: #f59e0b; } .btile.occ.w-red { background: #fef2f2; border-color: #ef4444; border-width: 2px; }
+[data-theme="dark"] .btile.empty { background: #052e1f; border-color: #065f46; } [data-theme="dark"] .btile.reserved, [data-theme="dark"] .btile.occ.w-amber { background: #2b1d05; border-color: #92400e; }
+[data-theme="dark"] .btile.occ { background: #082032; border-color: #075985; } [data-theme="dark"] .btile.occ.w-red { background: #2d0a0a; border-color: #ef4444; }
 
 /* Doctor / nursing shift toggle */
 .seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 9px; overflow: hidden; }
