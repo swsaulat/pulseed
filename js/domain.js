@@ -376,7 +376,9 @@
           bed = U.norm(a.bed) || (p.workflows.bed.bedAllocated ? p.workflows.bed.allocatedBed : '');
           if (!bed) fail('Enter the ED bed the patient was physically placed in.');
           const holder = bedHolder(state, bed, p.id);
-          if (holder && !a.override) fail(holder.occupied ? `${bed} is occupied by ${holder.urn}. Release or move that patient first, or confirm the override if the bed record is wrong.` : `${bed} is still allocated to ${holder.urn} on the waiting list. Confirm the override if they are not going to that bed.`, 'BED_TAKEN');
+          // A bed with a patient in it can never take a second one, override or not: release or move that patient first.
+          if (holder && holder.occupied) fail(`${bed} is occupied by ${holder.urn}. Release or move that patient first (ED Beds & Boarding).`, 'BED_OCCUPIED');
+          if (holder && !a.override) fail(`${bed} is still allocated to ${holder.urn} on the waiting list. Confirm the override if they are not going to that bed.`, 'BED_TAKEN');
         }
         const snapshot = U.clone(p.workflows);
         const closed = D.activeWfs(p);

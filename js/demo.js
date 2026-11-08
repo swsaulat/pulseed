@@ -141,8 +141,14 @@
       acts.forEach(a => {
         // Synthetic history picks beds at random, so a bed may still be occupied when a demo patient is allocated it.
         const payload = a.type === 'ALLOCATE_BED' ? Object.assign({ override: true }, a.payload) : a.payload;
-        try { st = D.apply(st, { type: a.type, payload }, { user: { name: a.who[0], role: a.who[1] }, device: 'Demo Station', now: a.t, settings }).state; }
-        catch (e) { skipped++; }
+        const ctx = { user: { name: a.who[0], role: a.who[1] }, device: 'Demo Station', now: a.t, settings };
+        try { st = D.apply(st, { type: a.type, payload }, ctx).state; }
+        catch (e) {
+          // A bed is never shared: a history patient whose random bed is still occupied goes to the first empty bed instead.
+          const free = e.code === 'BED_OCCUPIED' && D.bedBoard(st, settings, a.t).beds.find(b => b.state === 'empty');
+          try { if (!free) throw e; st = D.apply(st, { type: a.type, payload: Object.assign({}, payload, { bed: free.bed }) }, ctx).state; }
+          catch (e2) { skipped++; }
+        }
       });
       // Overdue alerts the system would have logged.
       D.activePatients(st).forEach(p => { st = D.apply(st, { type: 'SYSTEM_OVERDUE', payload: { id: p.id } }, { user: { name: 'System', role: 'System' }, device: 'Demo Station', now, settings }).state; });
