@@ -27,7 +27,11 @@
       return true;
     },
   };
-  ['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, () => { const was = PE.audio.blocked; PE.audio.unlock(); if (was) UI.renderChrome(); }, { passive: true }));
+  // Redraw only after the click has finished, so the first tap on a button (which also unlocks sound) is not lost.
+  ['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, e => {
+    const was = PE.audio.blocked; PE.audio.unlock(); if (!was) return;
+    if (e.type === 'pointerdown') window.addEventListener('pointerup', () => setTimeout(UI.renderChrome, 0), { once: true }); else setTimeout(UI.renderChrome, 0);
+  }, { passive: true }));
 
   // ------------------------------------------------------------------ leader election: one tab per PC logs system events and purges
   let leader = !(navigator.locks && navigator.locks.request);
@@ -86,9 +90,14 @@
   // ------------------------------------------------------------------ boot
   async function start(mode) {
     await S.init(mode);
-    if (mode === 'demo' && !Object.keys(S.state.patients).length) {
+    // Training data is built around "now". If nobody has used it for 6 hours its clocks are stale (patients "29 h overdue"),
+    // so it is rebuilt fresh; anyone actively practising keeps their own entries.
+    const lastUse = mode === 'demo' ? Math.max(0, ...S.state.events.map(e => Date.parse(e.ts) || 0)) : 0;
+    const stale = mode === 'demo' && Object.keys(S.state.patients).length && Date.now() - lastUse > 6 * 3600000;
+    if (mode === 'demo' && (!Object.keys(S.state.patients).length || stale)) {
       await S.adapter.replace(PE.demo.build(S.settings).state);
       await S.reload();
+      if (stale) setTimeout(() => UI.toast('Training data refreshed to the current time.', 'success'), 800);
     }
     UI.applyTheme();
     const h = (location.hash || '').slice(1);

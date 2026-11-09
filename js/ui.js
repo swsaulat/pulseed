@@ -32,6 +32,7 @@
     edit: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
     search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.4-4.4',
     x: 'M18 6L6 18M6 6l12 12',
+    chev: 'M6 9l6 6 6-6',
     download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
     upload: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12',
     shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4',
@@ -148,13 +149,22 @@
 
     // alert bar
     const ab = $('#alertBar');
-    const items = [];
-    if (S.error) items.push(`<div class="alert red">${ic('alert')}<b>${esc(S.error)}</b></div>`);
-    if (L.ctas1.length) items.push(`<div class="alert red pulse">${ic('alert')}<b>CTAS 1 in waiting area (${L.ctas1.length}):</b> ${L.ctas1.map(p => `<button class="link" data-act="open" data-id="${esc(p.id)}">${esc(p.urn)}</button>`).join(', ')} — move to resuscitation / continuous observation now.</div>`);
-    if (L.overdue.length) items.push(`<div class="alert red">${ic('bell')}<b>${L.overdue.length} overdue reassessment${L.overdue.length > 1 ? 's' : ''}:</b> ${L.overdue.slice(0, 8).map(p => `<button class="link" data-act="reassess" data-id="${esc(p.id)}">${esc(p.urn)} (${esc(D.vitalsTiming(p, st(), now()).overdueMin < 1 ? '<1m' : U.dur(D.vitalsTiming(p, st(), now()).overdueMin))})</button>`).join(', ')}${L.overdue.length > 8 ? ' …' : ''}${!S.device.sound ? ' <span class="pill amber">sound muted</span>' : ''}</div>`);
-    if (L.overstay.length) items.push(`<div class="alert red pulse">${ic('bed')}<b>${L.overstay.length} overstay boarding (over ${U.dur(st().boardingRedMin)} since admission / referral):</b> ${L.overstay.slice(0, 8).map(p => `<button class="link" data-act="open" data-id="${esc(p.id)}">${esc(p.ed.bed)} · ${esc(p.urn)} (${esc(U.dur(D.boarding(p, st(), now()).mins))})</button>`).join(', ')}${L.overstay.length > 8 ? ' …' : ''} — charge nurse to move to ward / ICU.</div>`);
-    if (PE.audio && PE.audio.blocked && S.device.sound) items.push(`<div class="alert amber">${ic('belloff')}Audio alerts are blocked by the browser until you click anywhere on this page.</div>`);
-    ab.innerHTML = items.join('');
+    // One slim line of alert chips. A chip opens its patient list as a drop-down over the page, so alerts never push the screen down.
+    const A = [];
+    const lst = (arr, f) => arr.slice(0, 15).map(f).join('') + (arr.length > 15 ? `<span class="amore">+${arr.length - 15} more</span>` : '');
+    if (L.ctas1.length) A.push({ k: 'ctas1', ic: 'alert', pulse: true, label: `CTAS 1 in waiting area: ${L.ctas1.length}`, note: 'Move now to a resus bed, or any free monitored ED bed if resus is full. Continuous observation.',
+      list: lst(L.ctas1, p => `<button class="link" data-act="open" data-id="${esc(p.id)}">${esc(p.urn)}</button>`) });
+    if (L.overdue.length) A.push({ k: 'overdue', ic: 'bell', label: `${L.overdue.length} overdue reassessment${L.overdue.length > 1 ? 's' : ''}`, note: 'Click a patient to record the reassessment.' + (!S.device.sound ? ' <span class="pill amber">sound muted</span>' : ''),
+      list: lst(L.overdue, p => { const m = D.vitalsTiming(p, st(), now()).overdueMin; return `<button class="link" data-act="reassess" data-id="${esc(p.id)}">${esc(p.urn)} (${esc(m < 1 ? '<1m' : U.dur(m))})</button>`; }) });
+    if (L.overstay.length) A.push({ k: 'overstay', ic: 'bed', pulse: true, label: `${L.overstay.length} overstay boarding (over ${U.dur(st().boardingRedMin)})`, note: 'Charge nurse to move to ward / ICU.',
+      list: lst(L.overstay, p => `<button class="link" data-act="open" data-id="${esc(p.id)}">${esc(p.ed.bed)} · ${esc(p.urn)} (${esc(U.dur(D.boarding(p, st(), now()).mins))})</button>`) });
+    if (UI.alertOpen && !A.some(x => x.k === UI.alertOpen)) UI.alertOpen = null;
+    const open = A.find(x => x.k === UI.alertOpen);
+    const chips = A.map(x => `<button class="achip ${x.pulse ? 'pulse' : ''} ${UI.alertOpen === x.k ? 'on' : ''}" data-act="alerttoggle" data-id="${x.k}" aria-expanded="${UI.alertOpen === x.k}">${ic(x.ic)}<span>${esc(x.label)}</span>${ic('chev')}</button>`).join('');
+    const extra = (PE.audio && PE.audio.blocked && S.device.sound) ? `<span class="achip amber">${ic('belloff')}<span>Click anywhere to enable sound alerts</span></span>` : '';
+    ab.innerHTML = (S.error ? `<div class="alert red">${ic('alert')}<b>${esc(S.error)}</b></div>` : '')
+      + (A.length || extra ? `<div class="abar">${chips}${extra}</div>` : '')
+      + (open ? `<div class="apop" role="dialog" aria-label="${esc(open.label)}"><div class="apoph">${ic(open.ic)}<b>${esc(open.label)}</b><span>${open.note}</span><button class="x" data-act="alerttoggle" data-id="${open.k}" aria-label="Close">${ic('x')}</button></div><div class="aplist">${open.list}</div></div>` : '');
 
     // sidebar
     const badges = { dashboard: L.a.length, vitals: L.vit.length, bed: L.bed.length, procedure: L.proc.length, patients: L.a.length, edbeds: L.ed.length, audit: S.state.events.length };
@@ -213,6 +223,17 @@
     body.innerHTML = v.body();
     if (v.after) v.after();
     $('#main').scrollTop = y;
+    // After a re-triage the lists re-sort by urgency, so the patient can jump rows: scroll to them and highlight the row.
+    if (UI.flashId && Date.now() < UI.flashUntil) {
+      const hit = body.querySelector(`[data-id="${CSS.escape(UI.flashId)}"]`);
+      const row = hit && (hit.closest('tr, .bedtile, .tile, .spot, li') || hit);
+      if (row) { row.classList.add('flash'); row.scrollIntoView({ block: 'center', behavior: 'smooth' }); UI.flashId = null; }
+    }
+  };
+  /** Show a re-triaged patient where they now sit, even if a CTAS filter would hide them. */
+  UI.flashPatient = (id, ctas) => {
+    if (ctas && UI.vs.vctas && UI.vs.vctas !== ctas) { UI.vs.vctas = ''; $('#viewHead').innerHTML = VIEWS[UI.view].head(); }
+    UI.flashId = id; UI.flashUntil = Date.now() + 4000; UI.renderBody();
   };
   UI.refresh = () => { UI.renderChrome(); UI.renderBody(); UI.renderDatalists(); };
 
@@ -304,6 +325,10 @@
         const card = (title, count, sub, icon, tone, view, extra = '') => `
           <button class="metric ${tone} ${extra}" data-act="nav" data-id="${view}">
             <div><p>${title}</p><h4>${count}</h4><small>${sub}</small></div><span class="mi">${ic(icon)}</span></button>`;
+        // Dashboard numbers are grouped into labelled boxes so staff read them by purpose, not as 16 loose cards.
+        const tile = (title, count, sub, tone, view) => `<button class="mtile ${tone}" data-act="nav" data-id="${view}"><span class="mt">${title}</span><b>${count}</b><small>${sub}</small></button>`;
+        const group = (title, icon, tone, tag, tiles) => `<div class="mgroup ${tone}"><div class="mgh">${ic(icon)}<h3>${title}</h3><span class="mtag">${tag}</span></div><div class="mtiles n${tiles.length}">${tiles.join("")}</div></div>`;
+        const urgent = L.ctas1.length + L.overdue.length + L.overstay.length;
         const vitRows = L.vit.slice(0, 6).map(p => {
           const tm = D.vitalsTiming(p, s, t), v = p.workflows.vitals;
           return `<tr class="${tm.state === 'overdue' || tm.state === 'continuous' ? 'row-red' : ''}"><td>${urnLink(p)}</td><td>${ctasB(p.ctas)}</td><td class="mono">${v.lastReassessment ? U.when(v.lastReassessment) : 'Initial'}</td><td class="r">${timingB(tm)}</td><td class="r">${btn('reassess', p.id, 'Record', 'ghost', 'check')}</td></tr>`;
@@ -319,32 +344,33 @@
 
         return `
           <section class="hero">
-            <div><h2>Emergency Department Reassessment &amp; Flow Station</h2>
-              <p>Simultaneous multi-workflow waiting-area tracking. Patients can be enrolled in 1, 2 or all 3 workflows independently. Any disposition triggers the Global Exit Rule and closes every waiting-area workflow; patients placed on an ED bed move to ED Beds &amp; Boarding until they are released.</p></div>
+            <h2 title="Patients can be in 1, 2 or all 3 waiting-area workflows. Any disposition triggers the Global Exit Rule; patients placed on an ED bed move to ED Beds &amp; Boarding until released.">Main Dashboard <small class="hint">live · all workflows</small></h2>
             <div class="row">
-              <button class="btn sky" data-act="nav" data-id="vitals">${ic('heart')}Vitals (${L.vit.length})</button>
-              <button class="btn amber" data-act="nav" data-id="bed">${ic('bed')}Beds (${L.bed.length})</button>
-              <button class="btn blue" data-act="nav" data-id="procedure">${ic('syringe')}Procedures (${L.proc.length})</button>
-              <button class="btn ${L.overstay.length ? 'red' : 'ghost'}" data-act="nav" data-id="edbeds">${ic('bed')}ED Beds (${L.ed.length})</button>
+              <button class="btn sm sky" data-act="nav" data-id="vitals">${ic('heart')}Vitals (${L.vit.length})</button>
+              <button class="btn sm amber" data-act="nav" data-id="bed">${ic('bed')}Beds (${L.bed.length})</button>
+              <button class="btn sm blue" data-act="nav" data-id="procedure">${ic('syringe')}Procedures (${L.proc.length})</button>
+              <button class="btn sm ${L.overstay.length ? 'red' : 'ghost'}" data-act="nav" data-id="edbeds">${ic('bed')}ED Beds (${L.ed.length})</button>
             </div>
           </section>
-          <section class="metrics">
-            ${card('Active Vitals Monitoring', L.vit.length, 'Waiting-area reassessment schedule', 'heart', 'sky', 'vitals')}
-            ${card('Patients Awaiting ED Bed', L.bed.length, `<span class="tamber">${unalloc} waiting to be allocated</span>`, 'bed', 'amber', 'bed')}
-            ${card('Active Awaiting Procedure', L.proc.length, notReady.length ? `<span class="tred">${notReady.length} not ready (consent / arrangement)</span>` : 'Preparation &amp; readiness', 'syringe', 'blue', 'procedure')}
-            ${card('Overdue Reassessments', L.overdue.length, `${L.dueSoon.length} due soon`, 'alert', L.overdue.length ? 'red' : 'grey', 'vitals', L.overdue.length ? 'pulse-card-alert' : '')}
-          </section>
-          <section class="metrics small">
-            ${card('CTAS 1 in Waiting Area', L.ctas1.length, L.ctas1.length ? '<span class="tred">Requires resuscitation area</span>' : 'None', 'heart', L.ctas1.length ? 'red' : 'grey', 'patients', L.ctas1.length ? 'pulse-card-alert' : '')}
-            ${card('Longest Bed Wait', longest ? U.dur(longest.mins) : '—', longest ? `${esc(L.bed[0].urn)} · target &lt; ${s.bedWaitAmberMin}m` : 'No one waiting', 'clock', longest && longest.level !== 'ok' ? (longest.level === 'red' ? 'red' : 'amber') : 'grey', 'bed')}
-            ${card('Due Soon', L.dueSoon.length, 'Within the due-soon window', 'clock', L.dueSoon.length ? 'amber' : 'grey', 'vitals')}
-            ${card('Needs Disposition', L.noWf.length, L.noWf.length ? '<span class="tamber">No active workflow — record exit</span>' : 'All patients have a workflow', 'door', L.noWf.length ? 'amber' : 'grey', 'patients')}
-          </section>
-          <section class="metrics small">
-            ${card('Patients on ED Beds', L.ed.length, `${beds.occupied} of ${beds.listed} listed beds occupied`, 'bed', 'sky', 'edbeds')}
-            ${card('Empty ED Beds', beds.empty, beds.reserved ? `${beds.reserved} more reserved for waiting patients` : 'Ready for new patients', 'bed', beds.empty ? 'green' : 'amber', 'edbeds')}
-            ${card('Admitted / Referred (Boarding)', L.boarding.length, 'Waiting for ward / ICU on an ED bed', 'clock', L.boarding.length ? 'amber' : 'grey', 'edbeds')}
-            ${card(`Boarding Overstay (over ${U.dur(s.boardingRedMin)})`, L.overstay.length, L.overstay.length ? '<span class="tred">Charge nurse: escalate transfer</span>' : 'None', 'alert', L.overstay.length ? 'red' : 'grey', 'edbeds', L.overstay.length ? 'pulse-card-alert' : '')}
+          <section class="mgroups three">
+            ${group('Needs action now', 'alert', urgent ? 'red' : 'green', urgent ? `${urgent} to act on` : 'All clear', [
+              tile('CTAS 1 in waiting area', L.ctas1.length, L.ctas1.length ? 'Move to resus / monitored bed' : 'None', L.ctas1.length ? 'red pulse-card-alert' : 'ok', 'patients'),
+              tile('Overdue reassessments', L.overdue.length, `${L.dueSoon.length} due soon`, L.overdue.length ? 'red pulse-card-alert' : 'ok', 'vitals'),
+              tile(`Boarding over ${U.dur(s.boardingRedMin)}`, L.overstay.length, L.overstay.length ? 'Escalate transfer' : 'None', L.overstay.length ? 'red pulse-card-alert' : 'ok', 'edbeds'),
+            ])}
+            ${group('Waiting area', 'users', 'sky', `${L.a.length} active patients`, [
+              tile('Vitals monitoring', L.vit.length, 'Reassessment schedule', 'sky', 'vitals'),
+              tile('Awaiting ED bed', L.bed.length, unalloc ? `<span class="tamber">${unalloc} not allocated</span>` : 'All allocated', 'amber', 'bed'),
+              tile('Awaiting procedure', L.proc.length, notReady.length ? `<span class="tred">${notReady.length} not ready</span>` : 'Ready / on track', 'blue', 'procedure'),
+              tile('Longest bed wait', longest ? U.dur(longest.mins) : '—', longest ? `target &lt; ${s.bedWaitAmberMin}m` : 'No one waiting', longest && longest.level !== 'ok' ? (longest.level === 'red' ? 'red' : 'amber') : 'grey', 'bed'),
+              tile('Due soon', L.dueSoon.length, 'Reassessments', L.dueSoon.length ? 'amber' : 'grey', 'vitals'),
+              tile('Needs disposition', L.noWf.length, L.noWf.length ? '<span class="tamber">Record exit</span>' : 'None', L.noWf.length ? 'amber' : 'grey', 'patients'),
+            ])}
+            ${group('ED Beds', 'bed', 'green', `${beds.occupied} of ${beds.listed} occupied`, [
+              tile('Patients on ED beds', L.ed.length, 'Until released', 'sky', 'edbeds'),
+              tile('Empty beds', beds.empty, beds.reserved ? `${beds.reserved} more reserved` : 'Ready for patients', beds.empty ? 'green' : 'amber', 'edbeds'),
+              tile('Admitted / referred', L.boarding.length, 'Boarding, waiting for ward / ICU', L.boarding.length ? 'amber' : 'grey', 'edbeds'),
+            ])}
           </section>
           ${shiftPanel(t)}
           <section class="tri">
@@ -732,7 +758,7 @@
           urn: d.urn, encounterId: d.encounterId, name: d.name, diagnosis: d.diagnosis, ctas: d.ctas, physician: d.physician, team,
           workflows: { vitals: d.wfVitals, bed: d.wfBed, procedure: d.wfProc }, intendedSpecialty: d.intendedSpecialty, plannedProcedure: d.plannedProcedure, consent: d.consent, arranged: d.arranged,
         }, `Patient ${U.norm(d.urn).toUpperCase()} submitted into workflows.`);
-        if (res.patient && res.patient.ctas === 'CTAS 1') UI.toast('CTAS 1 — this patient needs the resuscitation area now, not the waiting room.', 'error');
+        if (res.patient && res.patient.ctas === 'CTAS 1') UI.toast('CTAS 1: move now to a resus bed, or any free monitored ED bed if resus is full. Not the waiting room.', 'error');
       },
     });
   };
@@ -787,9 +813,10 @@
       body: `${patientCard(p)}${edCard(p, t)}
         <div class="g3">
           ${field('Treating Physician', inp('physician', p.physician === 'Unassigned' ? '' : p.physician, 'list="dl-phys" maxlength="60" placeholder="Unassigned"'), 'Pick from the list or type a new name; every change is in the audit trail.')}
+          ${field('CTAS (re-triage)', sel('ctas', D.CTAS, p.ctas), 'Upgrade if the patient deteriorates, downgrade if improving. Use Move bed for a monitored / resus bed.')}
           ${field('ED Team', inp('team', p.team, 'maxlength="40" required'))}
-          ${field('Diagnosis', inp('diagnosis', p.diagnosis, 'maxlength="120" required'))}
-          ${field('Change note', inp('note', '', 'maxlength="200" placeholder="Optional, e.g. handed over to Dr X"'), '', 'span2')}
+          ${field('Diagnosis', inp('diagnosis', p.diagnosis, 'maxlength="120" required'), '', 'span2')}
+          ${field('Change note', inp('note', '', 'maxlength="200" placeholder="Optional, e.g. deteriorated, handed over to Dr X"'), '', 'span2')}
         </div>
         <div class="row"><button type="button" class="btn ghost sm" data-do="undo">${ic('undo')}Undo placement (back to waiting area)</button></div>
         <h4 class="sh">Timeline (${evs.length})</h4>
@@ -799,7 +826,9 @@
         m.close(); ({ decision: UI.edDecisionModal, move: UI.edMoveModal, release: UI.edReleaseModal, undo: UI.reopenModal })[go.dataset.do](id);
       }),
       onSubmit: async (f, d) => {
-        await run('UPDATE_DETAILS', { id, expectedVersion: p.version, note: d.note, changes: { physician: d.physician, team: d.team, diagnosis: d.diagnosis } }, `Details updated for ${p.urn} on ${p.ed.bed}.`);
+        await run('UPDATE_DETAILS', { id, expectedVersion: p.version, note: d.note, changes: { physician: d.physician, ctas: d.ctas, team: d.team, diagnosis: d.diagnosis } },
+          d.ctas !== p.ctas ? `${p.urn} on ${p.ed.bed} re-triaged ${p.ctas} → ${d.ctas}.` : `Details updated for ${p.urn} on ${p.ed.bed}.`);
+        if (d.ctas !== p.ctas) UI.flashPatient(id, d.ctas);
       },
     });
   };
@@ -974,7 +1003,9 @@
         });
       },
       onSubmit: async (f, d) => {
-        await run('UPDATE_DETAILS', { id, expectedVersion: p.version, note: d.note, changes: { name: d.name, ctas: d.ctas, encounterId: d.encounterId, diagnosis: d.diagnosis, physician: d.physician, team: d.team } }, `Details updated for ${p.urn}.`);
+        await run('UPDATE_DETAILS', { id, expectedVersion: p.version, note: d.note, changes: { name: d.name, ctas: d.ctas, encounterId: d.encounterId, diagnosis: d.diagnosis, physician: d.physician, team: d.team } },
+          d.ctas !== p.ctas ? `${p.urn} re-triaged ${p.ctas} → ${d.ctas}. The list re-sorts by urgency; the patient is highlighted.` : `Details updated for ${p.urn}.`);
+        if (d.ctas !== p.ctas) UI.flashPatient(id, d.ctas);
       },
     });
   };
@@ -1290,6 +1321,7 @@
   const needLeader = fn => needUser((...a) => { if (!D.isLeader(S.user)) return UI.toast('Spreadsheet exports are for ED Leaders and Admins.', 'warn'); fn(...a); });
   const ACT = {
     nav: id => UI.go(id),
+    alerttoggle: id => { UI.alertOpen = UI.alertOpen === id ? null : id; UI.renderChrome(); },
     open: needUser(UI.patientModal),
     reassess: needUser(UI.reassessModal),
     bed: needUser(UI.bedModal),
@@ -1358,6 +1390,8 @@
   };
   function onClick(e) {
     const el = e.target.closest('[data-act]');
+    // Any click outside the alert chips closes an open alert list (a patient link inside it also opens that patient).
+    if (UI.alertOpen && !e.target.closest('.achip, .apoph')) { UI.alertOpen = null; UI.renderChrome(); }
     if (!el) return;
     const fn = ACT[el.dataset.act];
     if (!fn) return;
